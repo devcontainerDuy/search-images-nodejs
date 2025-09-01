@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title><%= title %></title>
+    <style>
+      body { font-family: system-ui, Arial, sans-serif; background: #f7f7f7; margin: 0; }
+      .container { max-width: 900px; margin: 0 auto; padding: 24px; }
+      h1 { margin: 0 0 16px; }
+      .card { background: #fff; border: 1px solid #e8e8e8; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+      .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+      label { font-weight: 600; display: block; margin: 8px 0 4px; }
+      input[type="text"], textarea { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px; }
+      input[type="file"] { display: block; margin: 6px 0 12px; }
+      button { background: #0b5ed7; color: #fff; border: 0; border-radius: 6px; padding: 10px 16px; cursor: pointer; }
+      button:disabled { background: #9db7e5; cursor: not-allowed; }
+      .muted { color: #666; font-size: 13px; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+      .item { background: #fff; border: 1px solid #eee; border-radius: 6px; overflow: hidden; }
+      .item img { display: block; width: 100%; height: 160px; object-fit: cover; }
+      .item .meta { padding: 8px; font-size: 13px; }
+      .success { color: #0a7e07; }
+      .error { color: #b00020; }
+      .flex { display: flex; align-items: center; gap: 8px; }
+      .right { text-align: right; }
+      .sep { height: 1px; background: #eee; margin: 12px 0; }
+      .tag { display: inline-block; background: #eef3ff; color: #2046a4; border-radius: 999px; padding: 2px 8px; font-size: 12px; margin-right: 6px; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Tìm kiếm hình ảnh</h1>
+      <div class="card">
+        <h3>Upload hình ảnh</h3>
+        <form id="uploadForm">
+          <label>Chọn hình ảnh (jpeg, png, gif, webp, ≤10MB)</label>
+          <input id="imageInput" name="image" type="file" accept="image/jpeg,image/png,image/gif,image/webp" required />
+          <label>Tiêu đề</label>
+          <input name="title" type="text" placeholder="Tiêu đề (tùy chọn)" />
+          <label>Mô tả</label>
+          <textarea name="description" placeholder="Mô tả (tùy chọn)"></textarea>
+          <label>Tags (phân tách bởi dấu phẩy)</label>
+          <input name="tags" type="text" placeholder="vd: cat, animal" />
+          <div class="sep"></div>
+          <div class="flex">
+            <button id="uploadBtn" type="submit">Upload</button>
+            <span id="uploadMsg" class="muted"></span>
+          </div>
+        </form>
+      </div>
+
+      <div class="card">
+        <h3>Tìm kiếm theo từ khóa</h3>
+        <form id="searchForm" class="flex" style="gap:8px">
+          <input id="q" type="text" placeholder="Nhập từ khóa..." style="flex: 1" />
+          <button type="submit">Tìm</button>
+          <button id="cameraBtn" type="button" title="Tìm bằng hình ảnh" style="background:#34a853">📷</button>
+          <input id="cameraInput" type="file" accept="image/*" style="display:none" />
+        </form>
+        <div class="muted">Nhấn biểu tượng 📷 để tải ảnh giống Google Images.</div>
+        <div id="searchInfo" class="muted"></div>
+        <div id="results" class="grid"></div>
+      </div>
+
+      <div class="card">
+        <h3>Tìm kiếm bằng hình ảnh</h3>
+        <form id="byImageForm" class="flex" enctype="multipart/form-data">
+          <input id="byImage" name="image" type="file" accept="image/*" />
+          <input id="imgUrl" type="text" placeholder="hoặc dán URL ảnh..." style="flex:1" />
+          <button type="submit">Tìm ảnh giống</button>
+        </form>
+        <div class="muted">Ngưỡng tương đồng (Hamming ≤16) có thể chỉnh qua query.</div>
+        <div id="byImageResults" class="grid" style="margin-top:12px"></div>
+      </div>
+    </div>
+
+    <script>
+      const uploadForm = document.getElementById('uploadForm');
+      const uploadBtn = document.getElementById('uploadBtn');
+      const uploadMsg = document.getElementById('uploadMsg');
+      uploadForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        uploadMsg.textContent = '';
+        const file = document.getElementById('imageInput').files[0];
+        if (!file) { uploadMsg.textContent = 'Vui lòng chọn ảnh'; uploadMsg.className = 'error'; return; }
+        if (file.size > 10 * 1024 * 1024) { uploadMsg.textContent = 'File quá lớn (>10MB)'; uploadMsg.className = 'error'; return; }
+        uploadBtn.disabled = true;
+        const fd = new FormData(uploadForm);
+        try {
+          const resp = await fetch('/api/upload', { method: 'POST', body: fd });
+          const data = await resp.json();
+          if (!resp.ok || !data.success) throw new Error(data.error || 'Upload thất bại');
+          uploadMsg.textContent = 'Upload thành công (ID: ' + data.imageId + ')';
+          uploadMsg.className = 'success';
+        } catch (err) {
+          uploadMsg.textContent = err.message;
+          uploadMsg.className = 'error';
+        } finally { uploadBtn.disabled = false; }
+      });
+
+      const searchForm = document.getElementById('searchForm');
+      const results = document.getElementById('results');
+      const searchInfo = document.getElementById('searchInfo');
+      searchForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const q = document.getElementById('q').value.trim();
+        const url = '/api/search?q=' + encodeURIComponent(q);
+        results.innerHTML = '';
+        searchInfo.textContent = 'Đang tìm kiếm...';
+        const r = await fetch(url);
+        const data = await r.json();
+        searchInfo.textContent = 'Tổng: ' + (data.pagination?.total || 0);
+        (data.images || []).forEach(img => {
+          const el = document.createElement('div');
+          el.className = 'item';
+          el.innerHTML = '<img src="' + img.url + '" alt="" />' +
+                         '<div class="meta"><div class="tag">#' + img.id + '</div>' +
+                         (img.title || '') +
+                         '<div class="flex" style="margin-top:6px">' +
+                         '<button data-id="' + img.id + '" class="similar-btn">Tìm ảnh tương tự</button>' +
+                         '</div>' +
+                         '</div>';
+          results.appendChild(el);
+        });
+        results.querySelectorAll('.similar-btn').forEach(btn => {
+          btn.addEventListener('click', async (ev) => {
+            const id = ev.currentTarget.getAttribute('data-id');
+            try {
+              const r = await fetch('/api/image/' + id + '/similar?threshold=16&topK=24');
+              const data = await r.json();
+              const grid = document.getElementById('byImageResults');
+              grid.innerHTML = '';
+              (data.results || []).forEach(s => {
+                const el = document.createElement('div');
+                el.className = 'item';
+                el.innerHTML = '<img src="' + s.url + '" />' +
+                               '<div class="meta">Hamming: ' + s.distance + ' • Sim: ' + Math.round(s.similarity*100) + '%</div>';
+                grid.appendChild(el);
+              });
+              window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+            } catch (err) {
+              alert('Lỗi tìm ảnh tương tự: ' + err.message);
+            }
+          })
+        })
+      });
+
+      const byImageForm = document.getElementById('byImageForm');
+      const byImageResults = document.getElementById('byImageResults');
+      // Camera button flow (giống Google: chọn file và tìm trực tiếp)
+      const cameraBtn = document.getElementById('cameraBtn');
+      const cameraInput = document.getElementById('cameraInput');
+      cameraBtn.addEventListener('click', () => cameraInput.click());
+      cameraInput.addEventListener('change', async () => {
+        const file = cameraInput.files[0];
+        if (!file) return;
+        const fd = new FormData();
+        fd.append('image', file);
+        byImageResults.innerHTML = '';
+        const info = document.getElementById('searchInfo');
+        info.textContent = 'Đang tìm ảnh tương tự...';
+        try {
+          const resp = await fetch('/api/search-by-image?threshold=16&topK=24', { method: 'POST', body: fd });
+          const data = await resp.json();
+          info.textContent = 'Tìm thấy ' + (data.results?.length || 0) + ' ảnh tương tự';
+          (data.results || []).forEach(r => {
+            const el = document.createElement('div');
+            el.className = 'item';
+            el.innerHTML = '<img src="' + r.url + '" />' +
+                           '<div class="meta">Hamming: ' + r.distance + ' • Sim: ' + Math.round(r.similarity*100) + '%</div>';
+            byImageResults.appendChild(el);
+          });
+          window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+        } catch (err) {
+          info.textContent = 'Lỗi tìm kiếm ảnh: ' + err.message;
+        } finally {
+          cameraInput.value = '';
+        }
+      });
+      byImageForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        byImageResults.innerHTML = '';
+        const file = document.getElementById('byImage').files[0];
+        const url = document.getElementById('imgUrl').value.trim();
+        try {
+          let resp;
+          if (file) {
+            const fd = new FormData();
+            fd.append('image', file);
+            resp = await fetch('/api/search-by-image?threshold=16&topK=24', { method: 'POST', body: fd });
+          } else if (url) {
+            resp = await fetch('/api/search-by-image?threshold=16&topK=24', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url })
+            });
+          } else {
+            alert('Chọn file hoặc nhập URL'); return;
+          }
+          const data = await resp.json();
+          (data.results || []).forEach(r => {
+            const el = document.createElement('div');
+            el.className = 'item';
+            el.innerHTML = '<img src="' + r.url + '" />' +
+                           '<div class="meta">Hamming: ' + r.distance + ' • Sim: ' + Math.round(r.similarity*100) + '%</div>';
+            byImageResults.appendChild(el);
+          });
+        } catch (err) {
+          alert('Lỗi tìm kiếm: ' + err.message);
+        }
+      });
+    </script>
+  </body>
+  </html>
