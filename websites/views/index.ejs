@@ -15,6 +15,11 @@
         <h1><%= title %></h1>
         <p>Welcome to <%= title %></p>
 
-        <h1 class="text-3xl font-bold underline text-clifford">Hello world!</h1>
+        <h1>Tìm ảnh tương đồng (MVP)</h1>
+        <form action="/search-by-image" method="post" enctype="multipart/form-data">
+            <input type="file" name="image" accept="image/*" required />
+            <button type="submit">Tìm</button>
+        </form>
+        <p>Seed images ở: <code>/uploads/seed/</code></p>
     </body>
 </html>

@@ -1,4 +1,4 @@
-const mysql = require("mysql2/promise");
+import mysql from "mysql2/promise";
 
 const database = mysql.createPool({
 	host: process.env.DB_HOST,
@@ -18,4 +18,4 @@ if (typeof database.on === "function") {
 	});
 }
 
-module.exports = database;
+export default database;
