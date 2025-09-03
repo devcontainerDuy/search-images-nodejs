@@ -8,6 +8,7 @@ const database = mysql.createPool({
 	waitForConnections: true,
 	connectionLimit: 10,
 	queueLimit: 0,
+	namedPlaceholders: true
 });
 
 // In some environments the promise pool may not expose EventEmitter 'on'
