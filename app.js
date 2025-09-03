@@ -745,12 +745,6 @@ app.get("/api/image/:id/similar", async (req, res) => {
 	}
 });
 
-// Serve frontend via EJS instead of static HTML (for unknown GET paths)
-app.get("*", (req, res, next) => {
-	// Only handle GET that haven't matched earlier routes
-	res.render("index", { title: "Image Search" });
-});
-
 // catch 404 for other methods and forward to error handler
 app.use(function (req, res, next) {
 	next(createError(404));
