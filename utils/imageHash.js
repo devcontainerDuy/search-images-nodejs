@@ -30,8 +30,8 @@ async function computeDHashHex(input) {
 }
 
 // Compute dHashes for a grid of tiles (grid x grid)
-async function computeTileDHashes(filePath, grid = 4) {
-  const base = sharp(filePath);
+async function computeTileDHashes(input, grid = 4) {
+  const base = (typeof input === 'string' || Buffer.isBuffer(input)) ? sharp(input) : sharp(await input);
   const meta = await base.metadata();
   const w = meta.width || 0;
   const h = meta.height || 0;
@@ -56,8 +56,8 @@ async function computeTileDHashes(filePath, grid = 4) {
 }
 
 // Compute overlapping tiles dHashes with given overlap ratio (0..0.9)
-async function computeOverlappingTileDHashes(filePath, grid = 4, overlap = 0.5) {
-  const base = sharp(filePath);
+async function computeOverlappingTileDHashes(input, grid = 4, overlap = 0.5) {
+  const base = (typeof input === 'string' || Buffer.isBuffer(input)) ? sharp(input) : sharp(await input);
   const meta = await base.metadata();
   const w = meta.width || 0;
   const h = meta.height || 0;

@@ -1,3 +1,7 @@
+const fs = require("fs-extra");
+const multer = require("multer");
+const path = require("path");
+
 const storage = multer.diskStorage({
 	destination: async (req, file, cb) => {
 		const uploadPath = "uploads/images";

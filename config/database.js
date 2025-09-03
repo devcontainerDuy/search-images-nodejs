@@ -11,8 +11,11 @@ const database = mysql.createPool({
 	queueLimit: 0,
 });
 
-database.on("connection", (connection) => {
-	console.log("New database connection established");
-});
+// In some environments the promise pool may not expose EventEmitter 'on'
+if (typeof database.on === "function") {
+	database.on("connection", () => {
+		console.log("New database connection established");
+	});
+}
 
 module.exports = database;
