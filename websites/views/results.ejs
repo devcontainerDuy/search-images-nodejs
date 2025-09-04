@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8" />
+        <title>Kết quả</title>
+        <link rel="stylesheet" href="/stylesheets/style.css" />
+        <style>
+            .grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+                gap: 12px;
+            }
+            .card {
+                border: 1px solid #ddd;
+                padding: 8px;
+                border-radius: 8px;
+            }
+            img {
+                max-width: 100%;
+                height: auto;
+                border-radius: 6px;
+            }
+            small {
+                color: #666;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>Kết quả</h1>
+        <% if (queryPath) { %>
+        <div class="card">
+            <p>Ảnh truy vấn:</p>
+            <img src="<%= queryPath %>" alt="query" />
+        </div>
+        <% } %>
+        <div class="grid">
+            <% if (!items || items.length === 0) { %>
+            <div class="card">
+                <p>Không tìm thấy ảnh phù hợp. Hãy thử ảnh khác hoặc nới lỏng điều kiện.</p>
+            </div>
+            <% } %>
+            <% (items||[]).forEach(it=>{ %>
+            <div class="card">
+                <img src="/<%= it.storage_path %>" alt="img" />
+                <small>score: <%= it.score.toFixed(4) %> | màu: <%= it.parts.colorSim.toFixed(3) %> | bố cục: <%= it.parts.thirdsSim.toFixed(3) %> | edge: <%= it.parts.edgeSim.toFixed(3) %></small>
+            </div>
+            <% }) %>
+        </div>
+        <p><a href="/search">Tìm lại</a></p>
+    </body>
+</html>
