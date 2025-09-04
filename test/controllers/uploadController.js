@@ -1,6 +1,7 @@
-const path = require("path");
+const path = require("node:path");
 const multer = require("multer");
-const sharp = require("sharp");
+// Sử dụng cùng một phiên bản sharp được đóng gói với @xenova/transformers để tránh xung đột DLL trên Windows
+const sharp = require("@xenova/transformers/node_modules/sharp");
 const fs = require("fs-extra");
 const db = require("../config/database");
 const hash = require("../services/hashService");
@@ -9,7 +10,6 @@ const { computeCenterColorHistograms } = require("../utils/color");
 const clip = require("../services/clipService");
 const ann = require("../services/annService");
 
-// Multer configuration
 const storage = multer.diskStorage({
     destination: async (req, file, cb) => {
         const uploadPath = "uploads/images";
@@ -45,7 +45,7 @@ async function uploadImage(req, res) {
         const metadata = await sharp(filePath).metadata();
         const [result] = await db.execute(
             `INSERT INTO images (filename, original_name, file_path, file_size, mime_type, width, height, title, description, tags)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [req.file.filename, req.file.originalname, filePath, req.file.size, req.file.mimetype, metadata.width, metadata.height, title || "", description || "", tags || ""]
         );
 
@@ -84,16 +84,15 @@ async function uploadImage(req, res) {
         // Colors (global + center crops)
         try {
             const { vector, bins } = await colors.computeColorHistogram(filePath);
-            await db.execute(
-                "INSERT INTO image_colors (image_id, bins, histogram, variant) VALUES (?, ?, ?, ?)",
-                [result.insertId, bins, JSON.stringify(vector), "global"]
-            );
+            await db.execute("INSERT INTO image_colors (image_id, bins, histogram, variant) VALUES (?, ?, ?, ?)", [result.insertId, bins, JSON.stringify(vector), "global"]);
             const centers = await computeCenterColorHistograms(filePath, [0.8, 0.6, 0.4]);
             for (const c of centers) {
-                await db.execute(
-                    "INSERT INTO image_colors (image_id, bins, histogram, variant) VALUES (?, ?, ?, ?)",
-                    [result.insertId, c.bins, JSON.stringify(c.vector), c.variant]
-                );
+                await db.execute("INSERT INTO image_colors (image_id, bins, histogram, variant) VALUES (?, ?, ?, ?)", [
+                    result.insertId,
+                    c.bins,
+                    JSON.stringify(c.vector),
+                    c.variant,
+                ]);
             }
         } catch (e) {
             console.error("Color histogram error:", e);
@@ -204,16 +203,10 @@ async function reindexColors(req, res) {
             try {
                 await db.execute("DELETE FROM image_colors WHERE image_id = ?", [img.id]);
                 const { vector, bins } = await colors.computeColorHistogram(img.file_path);
-                await db.execute(
-                    "INSERT INTO image_colors (image_id, bins, histogram, variant) VALUES (?, ?, ?, ?)",
-                    [img.id, bins, JSON.stringify(vector), "global"]
-                );
+                await db.execute("INSERT INTO image_colors (image_id, bins, histogram, variant) VALUES (?, ?, ?, ?)", [img.id, bins, JSON.stringify(vector), "global"]);
                 const centers = await computeCenterColorHistograms(img.file_path, [0.8, 0.6, 0.4]);
                 for (const c of centers) {
-                    await db.execute(
-                        "INSERT INTO image_colors (image_id, bins, histogram, variant) VALUES (?, ?, ?, ?)",
-                        [img.id, c.bins, JSON.stringify(c.vector), c.variant]
-                    );
+                    await db.execute("INSERT INTO image_colors (image_id, bins, histogram, variant) VALUES (?, ?, ?, ?)", [img.id, c.bins, JSON.stringify(c.vector), c.variant]);
                 }
                 reindexed++;
             } catch (e) {

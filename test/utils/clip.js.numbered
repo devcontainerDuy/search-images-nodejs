@@ -1,0 +1,82 @@
+   1:// Utility for CLIP embeddings using @xenova/transformers
+   2:// Works in CommonJS via dynamic import.
+   3:
+   4:const MODEL_ID = process.env.CLIP_MODEL_ID || "Xenova/clip-vit-base-patch32";
+   5:
+   6:let extractorPromise = null;
+   7:
+   8:async function getExtractor() {
+   9:    if (!extractorPromise) {
+  10:        extractorPromise = (async () => {
+  11:            const mod = await import("@xenova/transformers");
+  12:            const { pipeline, env } = mod;
+  13:            // Optional: allow caching locally
+  14:            if (process.env.TRANSFORMERS_CACHE) {
+  15:                env.cacheDir = process.env.TRANSFORMERS_CACHE;
+  16:            }
+  17:            env.allowLocalModels = true;
+  18:            // Load CLIP feature extraction pipeline
+  19:            return pipeline("feature-extraction", MODEL_ID);
+  20:        })();
+  21:    }
+  22:    return extractorPromise;
+  23:}
+  24:
+  25:async function computeClipEmbedding(input) {
+  26:    const mod = await import("@xenova/transformers");
+  27:    const { RawImage } = mod;
+  28:    const extractor = await getExtractor();
+  29:
+  30:    let image;
+  31:    if (Buffer.isBuffer(input)) {
+  32:        // Node.js: construct a Blob from Buffer, then decode via RawImage
+  33:        const NodeBlob = globalThis.Blob || require("buffer").Blob;
+  34:        image = await RawImage.fromBlob(new NodeBlob([input]));
+  35:    } else if (typeof input === "string") {
+  36:        // Local file path or URL
+  37:        image = await RawImage.read(input);
+  38:    } else {
+  39:        throw new Error("Unsupported input for computeClipEmbedding");
+  40:    }
+  41:
+  42:    // pooling: 'mean' to get a single vector, normalize for cosine similarity
+  43:    const output = await extractor(image, { pooling: "mean", normalize: true });
+  44:    const vector = Array.from(output.data);
+  45:
+  46:    let norm = 0;
+  47:    for (const v of vector) {
+  48:        norm += v * v;
+  49:    }
+  50:
+  51:    norm = Math.sqrt(norm);
+  52:    
+  53:    if (norm > 0) {
+  54:        for (let i = 0; i < vector.length; i++) {
+  55:            vector[i] /= norm;
+  56:        }
+  57:    }
+  58:
+  59:    return vector;
+  60:}
+  61:
+  62:function cosineSimilarity(vecA, vecB) {
+  63:    const len = Math.min(vecA.length, vecB.length);
+  64:    let dot = 0;
+  65:    let a2 = 0;
+  66:    let b2 = 0;
+  67:    for (let i = 0; i < len; i++) {
+  68:        const a = vecA[i];
+  69:        const b = vecB[i];
+  70:        dot += a * b;
+  71:        a2 += a * a;
+  72:        b2 += b * b;
+  73:    }
+  74:    if (a2 === 0 || b2 === 0) return 0;
+  75:    return dot / Math.sqrt(a2 * b2);
+  76:}
+  77:
+  78:module.exports = {
+  79:    MODEL_ID,
+  80:    computeClipEmbedding,
+  81:    cosineSimilarity,
+  82:};

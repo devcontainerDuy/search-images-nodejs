@@ -4,6 +4,7 @@
 const MODEL_ID = process.env.CLIP_MODEL_ID || "Xenova/clip-vit-base-patch32";
 
 let extractorPromise = null;
+let textExtractorPromise = null;
 
 async function getExtractor() {
     if (!extractorPromise) {
@@ -15,11 +16,27 @@ async function getExtractor() {
                 env.cacheDir = process.env.TRANSFORMERS_CACHE;
             }
             env.allowLocalModels = true;
-            // Load CLIP feature extraction pipeline
-            return pipeline("feature-extraction", MODEL_ID);
+            // Load CLIP image feature extraction pipeline (image tower)
+            return pipeline("image-feature-extraction", MODEL_ID);
         })();
     }
     return extractorPromise;
+}
+
+async function getTextExtractor() {
+    if (!textExtractorPromise) {
+        textExtractorPromise = (async () => {
+            const mod = await import("@xenova/transformers");
+            const { pipeline, env } = mod;
+            if (process.env.TRANSFORMERS_CACHE) {
+                env.cacheDir = process.env.TRANSFORMERS_CACHE;
+            }
+            env.allowLocalModels = true;
+            // CLIP text tower
+            return pipeline("feature-extraction", MODEL_ID);
+        })();
+    }
+    return textExtractorPromise;
 }
 
 async function computeClipEmbedding(input) {
@@ -39,9 +56,12 @@ async function computeClipEmbedding(input) {
         throw new Error("Unsupported input for computeClipEmbedding");
     }
 
-    // pooling: 'mean' to get a single vector, normalize for cosine similarity
-    const output = await extractor(image, { pooling: "mean", normalize: true });
+    // Compute image embedding tensor and L2-normalize
+    const output = await extractor(image);
     const vector = Array.from(output.data);
+    let norm = 0; for (let i = 0; i < vector.length; i++) norm += vector[i] * vector[i];
+    norm = Math.sqrt(norm);
+    if (norm > 0) { for (let i = 0; i < vector.length; i++) vector[i] /= norm; }
     return vector;
 }
 
@@ -65,4 +85,14 @@ module.exports = {
     MODEL_ID,
     computeClipEmbedding,
     cosineSimilarity,
+    // Optional: compute CLIP text embedding for text-to-image search
+    computeClipTextEmbedding: async function (text) {
+        if (typeof text !== 'string') throw new Error('Text must be a string');
+        const extractor = await getTextExtractor();
+        const output = await extractor(text, { pooling: 'mean' });
+        const arr = Array.from(output.data);
+        let norm = 0; for (let i = 0; i < arr.length; i++) norm += arr[i] * arr[i];
+        norm = Math.sqrt(norm); if (norm > 0) { for (let i = 0; i < arr.length; i++) arr[i] /= norm; }
+        return arr;
+    },
 };

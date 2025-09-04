@@ -1,4 +1,5 @@
-const sharp = require('sharp');
+// Use transformers' bundled sharp to ensure a single libvips instance
+const sharp = require('@xenova/transformers/node_modules/sharp');
 
 // Compute 64-bit dHash as hex string (16 hex chars)
 async function computeDHashHex(input) {
