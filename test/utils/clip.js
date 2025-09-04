@@ -57,6 +57,7 @@ async function computeClipEmbedding(input) {
     }
 
     // Compute image embedding tensor and L2-normalize
+    // pooling: 'mean' to get a single vector, normalize for cosine similarity
     const output = await extractor(image);
     const vector = Array.from(output.data);
     let norm = 0; for (let i = 0; i < vector.length; i++) norm += vector[i] * vector[i];

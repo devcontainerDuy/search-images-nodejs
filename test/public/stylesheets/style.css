@@ -1,8 +1,232 @@
+:root {
+  --bg: #f6f8fb;
+  --card-bg: #ffffff;
+  --text: #1f2937;
+  --muted: #6b7280;
+  --primary: #2563eb;
+  --primary-600: #1d4ed8;
+  --success: #16a34a;
+  --danger: #dc2626;
+  --border: #e5e7eb;
+  --ring: rgba(37, 99, 235, .25);
+}
+
+* {
+  box-sizing: border-box;
+}
+
 body {
-  padding: 50px;
-  font: 14px "Lucida Grande", Helvetica, Arial, sans-serif;
+  padding: 0;
+  margin: 0;
+  font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+  color: var(--text);
+  /* background: radial-gradient(60% 100% at 50% 0%, #ffffff 0%, var(--bg) 100%); */
+  background-image: linear-gradient(to right, #eea2a2 0%, #bbc1bf 19%, #57c6e1 42%, #b49fda 79%, #7ac5d8 100%);
 }
 
 a {
   color: #00B7FF;
+}
+
+.container {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 28px 20px 40px;
+}
+
+h1 {
+  margin: 0 0 18px;
+  letter-spacing: -0.02em;
+}
+
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 18px;
+  margin-bottom: 18px;
+  box-shadow: 0 10px 20px -12px rgba(0, 0, 0, .12), 0 4px 8px -6px rgba(0, 0, 0, .08);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+form {
+  margin-bottom: 16px;
+}
+
+label {
+  font-weight: 600;
+  display: block;
+  margin: 8px 0 6px;
+}
+
+input[type="text"],
+textarea,
+select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--text);
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+
+input[type="text"]:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 4px var(--ring);
+}
+
+input[type="file"] {
+  display: block;
+  margin: 6px 0 12px;
+}
+
+button {
+  background: var(--primary);
+  color: #fff;
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 16px;
+  cursor: pointer;
+  transition: transform .06s ease, filter .2s ease, background .2s ease;
+}
+
+button:hover {
+  filter: brightness(1.03);
+}
+
+button:active {
+  transform: translateY(1px);
+}
+
+button:disabled {
+  background: #9db7e5;
+  cursor: not-allowed;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 14px;
+}
+
+.item {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 6px 14px -10px rgba(0, 0, 0, .15);
+  transition: transform .15s ease, box-shadow .15s ease;
+}
+
+.item:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 14px 26px -16px rgba(0, 0, 0, .22);
+}
+
+.item img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  height: auto;
+  object-fit: cover;
+}
+
+.item .meta {
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+.success {
+  color: var(--success);
+}
+
+.error {
+  color: var(--danger);
+}
+
+.flex {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.right {
+  text-align: right;
+}
+
+.sep {
+  height: 1px;
+  background: var(--border);
+  margin: 14px 0;
+}
+
+.tag {
+  display: inline-block;
+  background: #eef3ff;
+  color: #1e40af;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  margin: 0 6px 6px 0;
+}
+
+.btn-search {
+  background-image: linear-gradient(to right, #84fab0 0%, #8fd3f4 51%, #84fab0 100%);
+  transition: 0.5s;
+  background-size: 200% auto;
+}
+
+.btn-grad {
+  background-image: linear-gradient(to right,
+      #314755 0%,
+      #26a0da 51%,
+      #314755 100%);
+  background-size: 120% auto;
+}
+
+.btn {
+  margin: 0 0;
+  padding: 12px 20px;
+  text-align: center;
+  text-transform: none;
+  box-shadow: 0 6px 14px -10px rgba(0, 0, 0, .2);
+  border-radius: 10px;
+  display: inline-block;
+}
+
+.btn:hover {
+  background-position: right center;
+  color: #fff;
+  text-decoration: none;
+  filter: brightness(1.03);
+}
+
+/* Utility */
+.flex {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.right {
+  text-align: right;
+}
+
+/* Compact select in toolbar */
+select {
+  min-width: 140px;
 }

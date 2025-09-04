@@ -1,419 +1,213 @@
 <!DOCTYPE html>
 <html lang="vi">
-	<head>
-		<meta charset="UTF-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-		<title><%= title %></title>
-		<style>
-			body {
-				font-family: system-ui, Arial, sans-serif;
-				background: #f7f7f7;
-				margin: 0;
-			}
-			.container {
-				max-width: 900px;
-				margin: 0 auto;
-				padding: 24px;
-			}
-			h1 {
-				margin: 0 0 16px;
-			}
-			.card {
-				background: #fff;
-				border: 1px solid #e8e8e8;
-				border-radius: 8px;
-				padding: 16px;
-				margin-bottom: 16px;
-			}
-			.row {
-				display: grid;
-				grid-template-columns: 1fr 1fr;
-				gap: 16px;
-			}
-			label {
-				font-weight: 600;
-				display: block;
-				margin: 8px 0 4px;
-			}
-			input[type="text"],
-			textarea {
-				width: 100%;
-				padding: 8px;
-				border: 1px solid #ddd;
-				border-radius: 6px;
-			}
-			input[type="file"] {
-				display: block;
-				margin: 6px 0 12px;
-			}
-			button {
-				background: #0b5ed7;
-				color: #fff;
-				border: 0;
-				border-radius: 6px;
-				padding: 10px 16px;
-				cursor: pointer;
-			}
-			button:disabled {
-				background: #9db7e5;
-				cursor: not-allowed;
-			}
-			.muted {
-				color: #666;
-				font-size: 13px;
-			}
-			.grid {
-				display: grid;
-				grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-				gap: 12px;
-			}
-			.item {
-				background: #fff;
-				border: 1px solid #eee;
-				border-radius: 6px;
-				overflow: hidden;
-			}
-			.item img {
-				display: block;
-				width: 100%;
-				height: 160px;
-				object-fit: cover;
-			}
-			.item .meta {
-				padding: 8px;
-				font-size: 13px;
-			}
-			.success {
-				color: #0a7e07;
-			}
-			.error {
-				color: #b00020;
-			}
-			.flex {
-				display: flex;
-				align-items: center;
-				gap: 8px;
-			}
-			.right {
-				text-align: right;
-			}
-			.sep {
-				height: 1px;
-				background: #eee;
-				margin: 12px 0;
-			}
-			.tag {
-				display: inline-block;
-				background: #eef3ff;
-				color: #2046a4;
-				border-radius: 999px;
-				padding: 2px 8px;
-				font-size: 12px;
-				margin-right: 6px;
-			}
-		</style>
-	</head>
-	<body>
-		<div class="container">
-			<h1>Tìm kiếm hình ảnh</h1>
-			<div class="card">
-				<h3>Upload hình ảnh</h3>
-				<form id="uploadForm">
-					<label>Chọn hình ảnh (jpeg, png, gif, webp, ≤10MB)</label>
-					<input
-						id="imageInput"
-						name="image"
-						type="file"
-						accept="image/jpeg,image/png,image/gif,image/webp"
-						required
-					/>
-					<label>Tiêu đề</label>
-					<input
-						name="title"
-						type="text"
-						placeholder="Tiêu đề (tùy chọn)"
-					/>
-					<label>Mô tả</label>
-					<textarea
-						name="description"
-						placeholder="Mô tả (tùy chọn)"
-					></textarea>
-					<label>Tags (phân tách bởi dấu phẩy)</label>
-					<input
-						name="tags"
-						type="text"
-						placeholder="vd: cat, animal"
-					/>
-					<div class="sep"></div>
-					<div class="flex">
-						<button id="uploadBtn" type="submit">Upload</button>
-						<span id="uploadMsg" class="muted"></span>
-					</div>
-				</form>
-			</div>
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title><%= title %></title>
+        <link rel="stylesheet" href="/stylesheets/style.css" />
+    </head>
 
-			<div class="card">
-				<h3>Tìm kiếm</h3>
-				<form
-					id="unifiedSearch"
-					class="flex"
-					enctype="multipart/form-data"
-					style="gap: 8px; align-items: stretch"
-				>
-					<input
-						id="q"
-						type="text"
-						placeholder="Nhập từ khóa... (để trống nếu tìm bằng ảnh)"
-						style="flex: 1"
-					/>
-					<button
-						id="cameraBtnUnified"
-						type="button"
-						title="Tìm bằng hình ảnh"
-						style="background: #34a853"
-					>
-						📷
-					</button>
-					<input
-						id="imageInputUnified"
-						name="image"
-						type="file"
-						accept="image/*"
-						style="display: none"
-					/>
-					<input
-						id="imgUrlUnified"
-						type="text"
-						placeholder="URL ảnh (tùy chọn)"
-						style="flex: 1"
-					/>
-					<select id="method" title="Phương pháp">
-						<option value="auto" selected>Tự động</option>
-						<option value="hash">Hash</option>
-						<option value="clip">CLIP (ngữ nghĩa)</option>
-					</select>
-					<button id="searchBtn" type="submit">Tìm</button>
-				</form>
-				<div class="muted">
-					Chọn ảnh bằng 📷 hoặc dán URL; nếu không có ảnh, hệ thống sẽ
-					tìm theo từ khóa. Phương pháp "Tự động" ưu tiên CLIP.
-				</div>
-				<div
-					id="resultsInfo"
-					class="muted"
-					style="margin-top: 8px"
-				></div>
-				<div id="results" class="grid" style="margin-top: 12px"></div>
-			</div>
-		</div>
+    <body>
+        <div class="container">
+            <h1>Tìm kiếm hình ảnh</h1>
+            <div class="card">
+                <h3>Upload hình ảnh</h3>
+                <form id="uploadForm">
+                    <label>Chọn hình ảnh (jpeg, png, gif, webp, ≤10MB)</label>
+                    <input id="imageInput" name="image" type="file" accept="image/jpeg,image/png,image/gif,image/webp" required />
+                    <label>Tiêu đề</label>
+                    <input name="title" type="text" placeholder="Tiêu đề (tùy chọn)" />
+                    <label>Mô tả</label>
+                    <textarea name="description" placeholder="Mô tả (tùy chọn)"></textarea>
+                    <label>Tags (phân tách bởi dấu phẩy)</label>
+                    <input name="tags" type="text" placeholder="vd: cat, animal" />
+                    <div class="sep"></div>
+                    <div class="flex">
+                        <button class="btn btn-grad" id="uploadBtn" type="submit">Upload</button>
+                        <span id="uploadMsg" class="muted"></span>
+                    </div>
+                </form>
+            </div>
 
-		<script>
-			const uploadForm = document.getElementById("uploadForm");
-			const uploadBtn = document.getElementById("uploadBtn");
-			const uploadMsg = document.getElementById("uploadMsg");
-			uploadForm.addEventListener("submit", async (e) => {
-				e.preventDefault();
-				uploadMsg.textContent = "";
-				const file = document.getElementById("imageInput").files[0];
-				if (!file) {
-					uploadMsg.textContent = "Vui lòng chọn ảnh";
-					uploadMsg.className = "error";
-					return;
-				}
-				if (file.size > 10 * 1024 * 1024) {
-					uploadMsg.textContent = "File quá lớn (>10MB)";
-					uploadMsg.className = "error";
-					return;
-				}
-				uploadBtn.disabled = true;
-				const fd = new FormData(uploadForm);
-				try {
-					const resp = await fetch("/api/upload", {
-						method: "POST",
-						body: fd,
-					});
-					const data = await resp.json();
-					if (!resp.ok || !data.success)
-						throw new Error(data.error || "Upload thất bại");
-					uploadMsg.textContent =
-						"Upload thành công (ID: " + data.imageId + ")";
-					uploadMsg.className = "success";
-				} catch (err) {
-					uploadMsg.textContent = err.message;
-					uploadMsg.className = "error";
-				} finally {
-					uploadBtn.disabled = false;
-				}
-			});
+            <div class="card">
+                <h3>Tìm kiếm</h3>
+                <form id="unifiedSearch" class="flex" enctype="multipart/form-data" style="gap: 8px; align-items: stretch">
+                    <input id="q" type="text" placeholder="Nhập từ khóa... (để trống nếu tìm bằng ảnh)" />
+                    <button id="cameraBtnUnified" class="btn btn-search" type="button" title="Tìm bằng hình ảnh"><span>📷</span></button>
+                    <input id="imageInputUnified" name="image" type="file" accept="image/*" style="display: none" />
+                    <input id="imgUrlUnified" type="text" placeholder="URL ảnh (tùy chọn)" />
+                    <select id="method" title="Phương pháp">
+                        <option value="auto" selected>Tự động</option>
+                        <option value="hash">Hash</option>
+                        <option value="clip">CLIP (ngữ nghĩa)</option>
+                    </select>
+                    <button id="searchBtn" class="btn btn-grad" type="submit">Tìm</button>
+                </form>
+                <div class="muted">Chọn ảnh bằng 📷 hoặc dán URL; nếu không có ảnh, hệ thống sẽ tìm theo từ khóa. Phương pháp "Tự động" ưu tiên CLIP.</div>
+                <div id="resultsInfo" class="muted" style="margin-top: 8px"></div>
+                <div id="results" class="grid" style="margin-top: 12px"></div>
+            </div>
+        </div>
 
-			// Unified search logic (keyword + image)
-			const results = document.getElementById("results");
-			const resultsInfo = document.getElementById("resultsInfo");
-			const unifiedForm = document.getElementById("unifiedSearch");
-			const methodSelect = document.getElementById("method");
-			const cameraBtnUnified =
-				document.getElementById("cameraBtnUnified");
-			const imageInputUnified =
-				document.getElementById("imageInputUnified");
-			const imgUrlUnified = document.getElementById("imgUrlUnified");
+        <script type="text/javascript">
+            const uploadForm = document.getElementById("uploadForm");
+            const uploadBtn = document.getElementById("uploadBtn");
+            const uploadMsg = document.getElementById("uploadMsg");
+            uploadForm.addEventListener("submit", async (e) => {
+                e.preventDefault();
+                uploadMsg.textContent = "";
+                const file = document.getElementById("imageInput").files[0];
+                if (!file) {
+                    uploadMsg.textContent = "Vui lòng chọn ảnh";
+                    uploadMsg.className = "error";
+                    return;
+                }
+                if (file.size > 10 * 1024 * 1024) {
+                    uploadMsg.textContent = "File quá lớn (>10MB)";
+                    uploadMsg.className = "error";
+                    return;
+                }
+                uploadBtn.disabled = true;
+                const fd = new FormData(uploadForm);
+                try {
+                    const resp = await fetch("/api/upload", {
+                        method: "POST",
+                        body: fd,
+                    });
+                    const data = await resp.json();
+                    if (!resp.ok || !data.success) throw new Error(data.error || "Upload thất bại");
+                    uploadMsg.textContent = "Upload thành công (ID: " + data.imageId + ")";
+                    uploadMsg.className = "success";
+                } catch (err) {
+                    uploadMsg.textContent = err.message;
+                    uploadMsg.className = "error";
+                } finally {
+                    uploadBtn.disabled = false;
+                }
+            });
 
-			function renderImages(list, meta = {}) {
-				results.innerHTML = "";
-				(list || []).forEach((img) => {
-					const el = document.createElement("div");
-					el.className = "item";
-					const footer =
-						meta.method === "clip"
-							? "Cosine: " +
-							  Number(img.similarity ?? 0).toFixed(3)
-							: img.distance != null
-							? "Hamming: " +
-							  img.distance +
-							  " • Sim: " +
-							  Math.round((img.similarity || 0) * 100) +
-							  "%"
-							: "";
-					const idTag = img.imageId || img.id;
-					el.innerHTML =
-						'<img src="' +
-						img.url +
-						'" alt="" />' +
-						'<div class="meta"><div class="tag">#' +
-						idTag +
-						"</div>" +
-						(img.title || "") +
-						(footer
-							? '<div class="muted">' + footer + "</div>"
-							: "") +
-						'<div class="flex" style="margin-top:6px">' +
-						'<button data-id="' +
-						idTag +
-						'" class="similar-btn">Tìm ảnh tương tự</button>' +
-						"</div>" +
-						"</div>";
-					results.appendChild(el);
-				});
-				// attach similar handlers
-				results.querySelectorAll(".similar-btn").forEach((btn) => {
-					btn.addEventListener("click", async (ev) => {
-						const id = ev.currentTarget.getAttribute("data-id");
-						try {
-							resultsInfo.textContent =
-								"Đang tìm ảnh tương tự...";
-							const r = await fetch(
-								"/api/image/" +
-									id +
-									"/similar?threshold=16&topK=24"
-							);
-							const data = await r.json();
-							renderImages(data.results || [], {
-								method: "hash",
-							});
-							resultsInfo.textContent =
-								"Kết quả ảnh tương tự (" +
-								(data.results?.length || 0) +
-								")";
-							window.scrollTo({
-								top: unifiedForm.offsetTop,
-								behavior: "smooth",
-							});
-						} catch (err) {
-							resultsInfo.textContent =
-								"Lỗi tìm ảnh tương tự: " + err.message;
-						}
-					});
-				});
-			}
+            // Unified search logic (keyword + image)
+            const results = document.getElementById("results");
+            const resultsInfo = document.getElementById("resultsInfo");
+            const unifiedForm = document.getElementById("unifiedSearch");
+            const methodSelect = document.getElementById("method");
+            const cameraBtnUnified = document.getElementById("cameraBtnUnified");
+            const imageInputUnified = document.getElementById("imageInputUnified");
+            const imgUrlUnified = document.getElementById("imgUrlUnified");
 
-			cameraBtnUnified.addEventListener("click", () =>
-				imageInputUnified.click()
-			);
-			imageInputUnified.addEventListener("change", async () => {
-				const file = imageInputUnified.files[0];
-				if (!file) return;
-				resultsInfo.textContent = "Đang tìm bằng ảnh...";
-				const fd = new FormData();
-				fd.append("image", file);
-				const method = methodSelect.value;
-				const ep =
-					method === "clip" || method === "auto"
-						? "/api/search-by-image?method=clip&minSim=0.25&topK=24"
-						: "/api/search-by-image?threshold=16&topK=24";
-				try {
-					const resp = await fetch(ep, { method: "POST", body: fd });
-					const data = await resp.json();
-					renderImages(data.results || [], {
-						method:
-							data.method ||
-							(method === "clip" || method === "auto"
-								? "clip"
-								: "hash"),
-					});
-					resultsInfo.textContent =
-						"Tìm thấy " + (data.results?.length || 0) + " ảnh";
-				} catch (err) {
-					resultsInfo.textContent =
-						"Lỗi tìm kiếm ảnh: " + err.message;
-				} finally {
-					imageInputUnified.value = "";
-				}
-			});
+            function renderImages(list, meta = {}) {
+                results.innerHTML = "";
+                (list || []).forEach((img) => {
+                    const el = document.createElement("div");
+                    el.className = "item";
+                    const footer =
+                        meta.method === "clip"
+                            ? "Cosine: " + Number(img.similarity ?? 0).toFixed(3)
+                            : img.distance != null
+                            ? "Hamming: " + img.distance + " • Sim: " + Math.round((img.similarity || 0) * 100) + "%"
+                            : "";
+                    const idTag = img.imageId || img.id;
+                    el.innerHTML = `<img src="${img.url}" alt="" />
+                        <div class="meta">
+							<div class="tag">#${idTag}</div>
+                        ${img.title || ""}
+                        ${footer ? `<div class="muted">${footer}</div>` : ""}
+                        	<div class="flex" style="margin-top:6px">
+                        		<button data-id="${idTag}" class="similar-btn">Tìm ảnh tương tự</button>
+                        	</div>
+                        </div>`;
+                    results.appendChild(el);
+                });
+                // attach similar handlers
+                results.querySelectorAll(".similar-btn").forEach((btn) => {
+                    btn.addEventListener("click", async (ev) => {
+                        const id = ev.currentTarget.getAttribute("data-id");
+                        try {
+                            resultsInfo.textContent = "Đang tìm ảnh tương tự...";
+                            const r = await fetch("/api/image/" + id + "/similar?threshold=16&topK=24");
+                            const data = await r.json();
+                            renderImages(data.results || [], {
+                                method: "hash",
+                            });
+                            resultsInfo.textContent = "Kết quả ảnh tương tự (" + (data.results?.length || 0) + ")";
+                            window.scrollTo({
+                                top: unifiedForm.offsetTop,
+                                behavior: "smooth",
+                            });
+                        } catch (err) {
+                            resultsInfo.textContent = "Lỗi tìm ảnh tương tự: " + err.message;
+                        }
+                    });
+                });
+            }
 
-			unifiedForm.addEventListener("submit", async (e) => {
-				e.preventDefault();
-				results.innerHTML = "";
-				const q = document.getElementById("q").value.trim();
-				const file = imageInputUnified.files[0];
-				const imgUrl = imgUrlUnified.value.trim();
-				const method = methodSelect.value;
-				try {
-					if (file || imgUrl) {
-						// Image-based search
-						resultsInfo.textContent = "Đang tìm bằng ảnh...";
-						let resp;
-						const ep =
-							method === "clip" || method === "auto"
-								? "/api/search-by-image?method=clip&minSim=0.25&topK=24"
-								: "/api/search-by-image?threshold=16&topK=24";
-						if (file) {
-							const fd = new FormData();
-							fd.append("image", file);
-							resp = await fetch(ep, {
-								method: "POST",
-								body: fd,
-							});
-						} else {
-							resp = await fetch(ep, {
-								method: "POST",
-								headers: { "Content-Type": "application/json" },
-								body: JSON.stringify({ url: imgUrl }),
-							});
-						}
-						const data = await resp.json();
-						renderImages(data.results || [], {
-							method:
-								data.method ||
-								(method === "clip" || method === "auto"
-									? "clip"
-									: "hash"),
-						});
-						resultsInfo.textContent =
-							"Tìm thấy " + (data.results?.length || 0) + " ảnh";
-					} else {
-						// Keyword search
-						resultsInfo.textContent = "Đang tìm theo từ khóa...";
-						const r = await fetch(
-							"/api/search?q=" + encodeURIComponent(q)
-						);
-						const data = await r.json();
-						renderImages(data.images || [], { method: "keyword" });
-						resultsInfo.textContent =
-							"Tổng: " + (data.pagination?.total || 0);
-					}
-				} catch (err) {
-					resultsInfo.textContent = "Lỗi tìm kiếm: " + err.message;
-				}
-			});
-		</script>
-	</body>
+            cameraBtnUnified.addEventListener("click", () => imageInputUnified.click());
+            imageInputUnified.addEventListener("change", async () => {
+                const file = imageInputUnified.files[0];
+                if (!file) return;
+                resultsInfo.textContent = "Đang tìm bằng ảnh...";
+                const fd = new FormData();
+                fd.append("image", file);
+                const method = methodSelect.value;
+                const ep = method === "clip" || method === "auto" ? "/api/search-by-image?method=clip&minSim=0.25&topK=24" : "/api/search-by-image?threshold=16&topK=24";
+                try {
+                    const resp = await fetch(ep, { method: "POST", body: fd });
+                    const data = await resp.json();
+                    renderImages(data.results || [], {
+                        method: data.method || (method === "clip" || method === "auto" ? "clip" : "hash"),
+                    });
+                    resultsInfo.textContent = "Tìm thấy " + (data.results?.length || 0) + " ảnh";
+                } catch (err) {
+                    resultsInfo.textContent = "Lỗi tìm kiếm ảnh: " + err.message;
+                } finally {
+                    imageInputUnified.value = "";
+                }
+            });
+
+            unifiedForm.addEventListener("submit", async (e) => {
+                e.preventDefault();
+                results.innerHTML = "";
+                const q = document.getElementById("q").value.trim();
+                const file = imageInputUnified.files[0];
+                const imgUrl = imgUrlUnified.value.trim();
+                const method = methodSelect.value;
+                try {
+                    if (file || imgUrl) {
+                        // Image-based search
+                        resultsInfo.textContent = "Đang tìm bằng ảnh...";
+                        let resp;
+                        const ep = method === "clip" || method === "auto" ? "/api/search-by-image?method=clip&minSim=0.25&topK=24" : "/api/search-by-image?threshold=16&topK=24";
+                        if (file) {
+                            const fd = new FormData();
+                            fd.append("image", file);
+                            resp = await fetch(ep, {
+                                method: "POST",
+                                body: fd,
+                            });
+                        } else {
+                            resp = await fetch(ep, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ url: imgUrl }),
+                            });
+                        }
+                        const data = await resp.json();
+                        renderImages(data.results || [], {
+                            method: data.method || (method === "clip" || method === "auto" ? "clip" : "hash"),
+                        });
+                        resultsInfo.textContent = "Tìm thấy " + (data.results?.length || 0) + " ảnh";
+                    } else {
+                        // Keyword search
+                        resultsInfo.textContent = "Đang tìm theo từ khóa...";
+                        const r = await fetch("/api/search?q=" + encodeURIComponent(q));
+                        const data = await r.json();
+                        renderImages(data.images || [], { method: "keyword" });
+                        resultsInfo.textContent = "Tổng: " + (data.pagination?.total || 0);
+                    }
+                } catch (err) {
+                    resultsInfo.textContent = "Lỗi tìm kiếm: " + err.message;
+                }
+            });
+        </script>
+    </body>
 </html>
