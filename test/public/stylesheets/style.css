@@ -22,8 +22,9 @@ body {
   color: var(--text);
   background: linear-gradient(45deg, #ff6b6b 0%, #4ecdc4 12.5%, #45b7d1 25%, #f9ca24 37.5%, #f0932b 50%, #eb4d4b 62.5%, #6c5ce7 75%, #a29bfe 87.5%, #fd79a8 100%);
   background-size: 400% 400%;
-  animation: rainbow-bg 8s ease-in-out infinite;
+  animation: rainbow-bg 12s ease-in-out infinite; /* Slower animation - 12s instead of 8s */
   min-height: 100vh;
+  will-change: auto; /* Reduce GPU load */
 }
 
 a {
@@ -642,7 +643,7 @@ select {
   }
 }
 
-/* Starry universe background */
+/* Starry universe background - Performance optimized */
 .stars-container {
   position: fixed;
   top: 0;
@@ -652,31 +653,33 @@ select {
   pointer-events: none;
   z-index: -1;
   overflow: hidden;
+  will-change: auto; /* Reduce GPU usage */
 }
 
 .star {
   position: absolute;
   background: radial-gradient(circle, rgba(255, 255, 255, 1) 0%, rgba(255, 255, 255, 0.8) 50%, transparent 100%);
   border-radius: 50%;
-  animation: twinkle 2s infinite ease-in-out alternate;
+  animation: twinkle 3s infinite ease-in-out alternate; /* Slower animation */
+  will-change: opacity; /* Only animate opacity */
 }
 
 .star.small {
   width: 2px;
   height: 2px;
-  box-shadow: 0 0 6px rgba(255, 255, 255, 0.8);
+  box-shadow: 0 0 4px rgba(255, 255, 255, 0.6); /* Reduced glow */
 }
 
 .star.medium {
   width: 3px;
   height: 3px;
-  box-shadow: 0 0 8px rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.7); /* Reduced glow */
 }
 
 .star.large {
   width: 4px;
   height: 4px;
-  box-shadow: 0 0 10px rgba(255, 255, 255, 1);
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.8); /* Reduced glow */
 }
 
 .shooting-star {
