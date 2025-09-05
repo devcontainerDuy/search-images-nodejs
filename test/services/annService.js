@@ -1,4 +1,5 @@
 // Optional ANN for CLIP using hnswlib-node
+const path = require("node:path");
 const db = require("../config/database");
 const { MODEL_ID, cosineSimilarity } = require("./clipService");
 
@@ -7,16 +8,55 @@ let hnsw = null;
 let indexBuilt = false;
 let dim = 0;
 
-try {
-    // Lazy require; if not installed, we’ll fallback
-    // eslint-disable-next-line import/no-extraneous-dependencies
-    const HNSWLib = require("hnswlib-node");
-    hnsw = new HNSWLib("cosine", 1);
-    available = true;
-    indexBuilt = false;
-} catch (e) {
-    available = false;
+function tryLoadHNSW() {
+    // Allow users to point to an existing installation (e.g., from another project)
+    // HNSWLIB_NODE_PATH: full path to the module (folder containing package.json)
+    // HNSWLIB_NODE_DIR: a directory to search using Node's resolver
+    const explicitPath = process.env.HNSWLIB_NODE_PATH;
+    const hintDir = process.env.HNSWLIB_NODE_DIR;
+    const candidates = [];
+
+    if (explicitPath) {
+        candidates.push(explicitPath);
+    }
+    // Default resolution in current project
+    candidates.push("hnswlib-node");
+
+    if (hintDir) {
+        try {
+            const resolved = require.resolve("hnswlib-node", { paths: [hintDir] });
+            candidates.unshift(resolved);
+        } catch (_) {
+            /* ignore */
+        }
+    }
+
+    for (const c of candidates) {
+        try {
+            // If c is a path to file, require it directly; otherwise require as a package name
+            const mod = c.endsWith(".js") || c.includes(path.sep) ? require(c) : require(c);
+            return mod;
+        } catch (_) {
+            /* try next */
+        }
+    }
+    return null;
 }
+
+(() => {
+    try {
+        const HNSWLib = tryLoadHNSW();
+        if (!HNSWLib) {
+            available = false;
+            return;
+        }
+        hnsw = new HNSWLib("cosine", 1);
+        available = true;
+        indexBuilt = false;
+    } catch (_) {
+        available = false;
+    }
+})();
 
 async function buildIndexIfNeeded() {
     if (!available || indexBuilt) return indexBuilt;
@@ -54,8 +94,8 @@ async function annSearch(vector, topK = 20) {
     const placeholders = ids.map(() => "?").join(",");
     const [rows] = await db.execute(
         `SELECT i.id as image_id, i.filename, i.original_name, i.title, i.description, e.embedding
-     FROM images i JOIN image_embeddings e ON e.image_id = i.id
-     WHERE e.model = ? AND i.id IN (${placeholders})`,
+        FROM images i JOIN image_embeddings e ON e.image_id = i.id
+        WHERE e.model = ? AND i.id IN (${placeholders})`,
         [MODEL_ID, ...ids]
     );
     // Recompute cosine to improve accuracy ordering

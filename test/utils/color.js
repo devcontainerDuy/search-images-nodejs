@@ -1,5 +1,6 @@
 // Use transformers' bundled sharp to ensure a single libvips instance
-const sharp = require("@xenova/transformers/node_modules/sharp");
+// const sharp = require("@xenova/transformers/node_modules/sharp"); // sharp setup for windowns
+const sharp = require("sharp");
 
 // Compute a compact HSV histogram: h(8) x s(4) x v(4) = 128 bins
 // Returns Float32Array normalized to sum=1, and JSON-serializable array

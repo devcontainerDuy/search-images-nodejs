@@ -1,4 +1,5 @@
 import createHttpError from "http-errors";
+import fs from "fs-extra";
 import { extractFeaturesFromFile } from "../services/features.js";
 import database from "../config/database.js";
 import { bufToF32, chiSquare, l2 } from "../utils/helper.js";
@@ -9,6 +10,7 @@ export default {
     },
 
     search: async (request, response, next) => {
+        const tmpPath = request?.file?.path || null;
         try {
             if (!request.file) return next(createHttpError(400, "No file uploaded"));
 
@@ -101,6 +103,15 @@ export default {
             response.render("results", { items: scored, queryPath });
         } catch (err) {
             next(err);
+        } finally {
+            if (tmpPath) {
+                try {
+                    await fs.remove(tmpPath);
+                    // Optional: remove parent directory if empty
+                    const parent = tmpPath.replace(/[\\/][^\\/]+$/, "");
+                    try { await fs.rmdir(parent); } catch (_) {}
+                } catch (_) {}
+            }
         }
     },
 };

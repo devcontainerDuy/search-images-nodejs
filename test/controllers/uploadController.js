@@ -1,7 +1,8 @@
 const path = require("node:path");
 const multer = require("multer");
 // Sử dụng cùng một phiên bản sharp được đóng gói với @xenova/transformers để tránh xung đột DLL trên Windows
-const sharp = require("@xenova/transformers/node_modules/sharp");
+// const sharp = require("@xenova/transformers/node_modules/sharp");
+const sharp = require("sharp"); // sử dụng sharp cài đặt riêng cho linux
 const fs = require("fs-extra");
 const db = require("../config/database");
 const hash = require("../services/hashService");
@@ -26,10 +27,21 @@ const storage = multer.diskStorage({
     },
 });
 
+// Upload dành cho lưu kho ảnh (ghi đĩa)
 const upload = multer({
     storage,
     limits: { fileSize: 10 * 1024 * 1024 },
-    dest: path.join("uploads", "tmp"),
+    fileFilter: (req, file, cb) => {
+        const allowed = ["image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp"];
+        if (allowed.includes(file.mimetype)) cb(null, true);
+        else cb(new Error("Chỉ chấp nhận file hình ảnh"));
+    },
+});
+
+// Upload dành riêng cho search-by-image (không lưu file), dùng memoryStorage
+const uploadSearch = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 },
     fileFilter: (req, file, cb) => {
         const allowed = ["image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp"];
         if (allowed.includes(file.mimetype)) cb(null, true);
@@ -223,6 +235,7 @@ async function reindexColors(req, res) {
 
 module.exports = {
     upload,
+    uploadSearch,
     uploadImage,
     getImage,
     deleteImage,

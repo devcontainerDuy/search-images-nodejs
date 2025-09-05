@@ -76,10 +76,24 @@ async function downloadImageToBuffer(url) {
 }
 
 async function searchByImage(req, res) {
+    // Ensure any accidentally disk-saved search image is removed after handling
+    const diskPath = req.file && req.file.path ? req.file.path : null;
     try {
         let buffer = null;
-        if (req.file) buffer = await fs.readFile(req.file.path);
-        else if (req.body && req.body.url) buffer = await downloadImageToBuffer(req.body.url);
+        if (req.file) {
+            if (req.file.buffer) {
+                // uploadSearch (memoryStorage)
+                console.log("[search-by-image] received file in-memory (buffer)");
+                buffer = req.file.buffer;
+            } else if (diskPath) {
+                // fallback if any disk storage is used
+                console.warn("[search-by-image] received file on disk at:", diskPath);
+                buffer = await fs.readFile(diskPath);
+            }
+        } else if (req.body && req.body.url) {
+            console.log("[search-by-image] using remote URL");
+            buffer = await downloadImageToBuffer(req.body.url);
+        }
         if (!buffer) return res.status(400).json({ error: "Vui lòng upload ảnh hoặc cung cấp url" });
 
         const method = (req.query?.method || "hash").toLowerCase();
@@ -107,11 +121,11 @@ async function searchByImage(req, res) {
                 // fallback scan
                 const [rows] = await db.execute(
                     `
-          SELECT e.image_id, e.embedding, i.filename, i.original_name, i.title, i.description
-          FROM image_embeddings e
-          JOIN images i ON i.id = e.image_id
-          WHERE e.model = ?
-        `,
+                    SELECT e.image_id, e.embedding, i.filename, i.original_name, i.title, i.description
+                    FROM image_embeddings e
+                    JOIN images i ON i.id = e.image_id
+                    WHERE e.model = ?
+                    `,
                     [clip.MODEL_ID]
                 );
                 const results = rows
@@ -294,6 +308,13 @@ async function searchByImage(req, res) {
         res.status(500).json({
             error: "Lỗi server khi tìm kiếm theo hình ảnh",
         });
+    } finally {
+        if (diskPath) {
+            try {
+                await fs.remove(diskPath);
+                console.log("[search-by-image] cleaned up temp file:", diskPath);
+            } catch (_) {}
+        }
     }
 }
 
