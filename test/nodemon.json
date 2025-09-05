@@ -5,7 +5,8 @@
     "routes/**/*.js",
     "controllers/**/*.js",
     "services/**/*.js",
-    "config/**/*.js"
+    "config/**/*.js",
+    "utils/**/*.js"
   ],
   "ext": "js,json,ejs",
   "ignore": [

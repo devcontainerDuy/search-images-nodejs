@@ -10,6 +10,7 @@ const colors = require("../services/colorService");
 const { computeCenterColorHistograms } = require("../utils/color");
 const clip = require("../services/clipService");
 const ann = require("../services/annService");
+const { searchListCache } = require("../services/cacheService");
 
 const storage = multer.diskStorage({
     destination: async (req, file, cb) => {
@@ -111,6 +112,11 @@ async function uploadImage(req, res) {
             console.error("Color histogram error:", e);
         }
 
+        // Invalidate cached search list results after content changes
+        try {
+            searchListCache.clear();
+        } catch (_) {}
+
         return res.json({
             success: true,
             imageId: result.insertId,
@@ -147,6 +153,10 @@ async function deleteImage(req, res) {
         await db.execute("DELETE FROM image_embeddings WHERE image_id = ?", [req.params.id]);
         await db.execute("DELETE FROM image_colors WHERE image_id = ?", [req.params.id]);
         ann.invalidate();
+        // Invalidate cached search list results after content changes
+        try {
+            searchListCache.clear();
+        } catch (_) {}
         res.json({ success: true, message: "Xóa thành công" });
     } catch (e) {
         console.error("Delete error:", e);

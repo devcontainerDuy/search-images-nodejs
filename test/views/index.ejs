@@ -46,6 +46,7 @@
                 <div class="muted">Chọn ảnh bằng 📷 hoặc dán URL; nếu không có ảnh, hệ thống sẽ tìm theo từ khóa. Phương pháp "Tự động" ưu tiên CLIP.</div>
                 <div id="resultsInfo" class="muted" style="margin-top: 8px"></div>
                 <div id="results" class="grid" style="margin-top: 12px"></div>
+                <div id="pagination" class="pagination" style="margin-top: 12px"></div>
             </div>
         </div>
 
@@ -89,6 +90,7 @@
             // Unified search logic (keyword + image)
             const results = document.getElementById("results");
             const resultsInfo = document.getElementById("resultsInfo");
+            const paginationEl = document.getElementById("pagination");
             const unifiedForm = document.getElementById("unifiedSearch");
             const methodSelect = document.getElementById("method");
             const cameraBtnUnified = document.getElementById("cameraBtnUnified");
@@ -130,6 +132,8 @@
                             renderImages(data.results || [], {
                                 method: "hash",
                             });
+                            // similar-by-id is not paginated
+                            if (typeof renderPagination === 'function') renderPagination(null);
                             resultsInfo.textContent = "Kết quả ảnh tương tự (" + (data.results?.length || 0) + ")";
                             window.scrollTo({
                                 top: unifiedForm.offsetTop,
@@ -144,25 +148,77 @@
                 results.querySelectorAll(".delete-btn").forEach((btn) => {
                     btn.addEventListener("click", async (ev) => {
                         const id = ev.currentTarget.getAttribute("data-id");
-                        const card = ev.currentTarget.closest('.item');
+                        const card = ev.currentTarget.closest(".item");
                         if (!id) return;
                         if (!confirm(`Bạn có chắc muốn xóa ảnh #${id}?`)) return;
                         const prevText = ev.currentTarget.textContent;
                         ev.currentTarget.disabled = true;
-                        ev.currentTarget.textContent = 'Đang xóa...';
+                        ev.currentTarget.textContent = "Đang xóa...";
                         try {
-                            const resp = await fetch(`/api/image/${id}`, { method: 'DELETE' });
+                            const resp = await fetch(`/api/image/${id}`, { method: "DELETE" });
                             const data = await resp.json();
-                            if (!resp.ok || data?.success !== true) throw new Error(data?.error || 'Xóa thất bại');
+                            if (!resp.ok || data?.success !== true) throw new Error(data?.error || "Xóa thất bại");
                             if (card) card.remove();
                             resultsInfo.textContent = `Đã xóa ảnh #${id}`;
                         } catch (err) {
-                            alert('Lỗi xóa: ' + err.message);
+                            alert("Lỗi xóa: " + err.message);
                             ev.currentTarget.disabled = false;
                             ev.currentTarget.textContent = prevText;
                         }
                     });
                 });
+            }
+
+            // Pagination helpers for keyword search
+            let currentQuery = "";
+            let currentPage = 1;
+            let currentLimit = 20;
+
+            function renderPagination(pagination) {
+                if (!pagination || !pagination.pages || pagination.pages <= 1) {
+                    paginationEl.innerHTML = "";
+                    return;
+                }
+                const { current, pages } = pagination;
+                const maxButtons = 7; // show up to 7 buttons
+                let start = Math.max(1, current - Math.floor(maxButtons / 2));
+                let end = start + maxButtons - 1;
+                if (end > pages) {
+                    end = pages;
+                    start = Math.max(1, end - maxButtons + 1);
+                }
+                const parts = [];
+                parts.push(`<button class="page-btn" data-page="${current - 1}" ${current === 1 ? "disabled" : ""}>« Trước</button>`);
+                if (start > 1) parts.push(`<button class="page-btn" data-page="1">1</button><span class="page-ellipsis">…</span>`);
+                for (let i = start; i <= end; i++) {
+                    parts.push(`<button class="page-btn ${i === current ? "active" : ""}" data-page="${i}">${i}</button>`);
+                }
+                if (end < pages) parts.push(`<span class="page-ellipsis">…</span><button class="page-btn" data-page="${pages}">${pages}</button>`);
+                parts.push(`<button class="page-btn" data-page="${current + 1}" ${current === pages ? "disabled" : ""}>Sau »</button>`);
+                paginationEl.innerHTML = parts.join("");
+
+                paginationEl.querySelectorAll(".page-btn").forEach((btn) => {
+                    btn.addEventListener("click", (e) => {
+                        const page = parseInt(e.currentTarget.getAttribute("data-page"), 10);
+                        if (!page || page === current || page < 1 || page > pages) return;
+                        performKeywordSearch(page);
+                    });
+                });
+            }
+
+            async function performKeywordSearch(page = 1) {
+                try {
+                    resultsInfo.textContent = "Đang tìm theo từ khóa...";
+                    const r = await fetch(`/api/search?q=${encodeURIComponent(currentQuery)}&page=${page}&limit=${currentLimit}`);
+                    const data = await r.json();
+                    renderImages(data.images || [], { method: "keyword" });
+                    renderPagination(data.pagination);
+                    currentPage = data.pagination?.current || page;
+                    resultsInfo.textContent = `Tổng: ${data.pagination?.total || 0} • Trang ${currentPage}/${data.pagination?.pages || 1}`;
+                    window.scrollTo({ top: unifiedForm.offsetTop, behavior: "smooth" });
+                } catch (err) {
+                    resultsInfo.textContent = "Lỗi tìm kiếm: " + err.message;
+                }
             }
 
             cameraBtnUnified.addEventListener("click", () => imageInputUnified.click());
@@ -180,6 +236,7 @@
                     renderImages(data.results || [], {
                         method: data.method || (method === "clip" || method === "auto" ? "clip" : "hash"),
                     });
+                    renderPagination(null);
                     resultsInfo.textContent = "Tìm thấy " + (data.results?.length || 0) + " ảnh";
                 } catch (err) {
                     resultsInfo.textContent = "Lỗi tìm kiếm ảnh: " + err.message;
@@ -221,12 +278,10 @@
                         });
                         resultsInfo.textContent = "Tìm thấy " + (data.results?.length || 0) + " ảnh";
                     } else {
-                        // Keyword search
-                        resultsInfo.textContent = "Đang tìm theo từ khóa...";
-                        const r = await fetch("/api/search?q=" + encodeURIComponent(q));
-                        const data = await r.json();
-                        renderImages(data.images || [], { method: "keyword" });
-                        resultsInfo.textContent = "Tổng: " + (data.pagination?.total || 0);
+                        // Keyword search with pagination
+                        currentQuery = q;
+                        currentPage = 1;
+                        await performKeywordSearch(1);
                     }
                 } catch (err) {
                     resultsInfo.textContent = "Lỗi tìm kiếm: " + err.message;

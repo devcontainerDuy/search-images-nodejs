@@ -1,10 +1,10 @@
-const fs = require("fs-extra");
 const db = require("../config/database");
 const hash = require("../services/hashService");
 const colors = require("../services/colorService");
 const clip = require("../services/clipService");
 const { computeCenterColorHistograms } = require("../utils/color");
 const ann = require("../services/annService");
+const { searchListCache, makeSearchKey } = require("../services/cacheService");
 
 async function searchText(req, res) {
     try {
@@ -12,6 +12,15 @@ async function searchText(req, res) {
         const pageNum = Math.max(1, parseInt(req.query.page, 10) || 1);
         const limitNum = Math.max(1, Math.min(100, parseInt(req.query.limit, 10) || 20));
         const offsetNum = (pageNum - 1) * limitNum;
+
+        // Cache hit check (keyword list only)
+        const cacheKey = makeSearchKey({ q, page: pageNum, limit: limitNum });
+        const cached = searchListCache.get(cacheKey);
+        if (cached) {
+            res.set("Cache-Control", "public, max-age=15, stale-while-revalidate=30");
+            res.set("X-Cache", "HIT");
+            return res.json(cached);
+        }
         let query = "SELECT * FROM images WHERE 1=1";
         const params = [];
         if (q) {
@@ -31,7 +40,7 @@ async function searchText(req, res) {
         }
         const [countResult] = await db.execute(countQuery, countParams);
         const total = countResult[0]?.total || 0;
-        res.json({
+        const payload = {
             images: images.map((img) => ({
                 ...img,
                 url: `/uploads/images/${img.filename}`,
@@ -43,7 +52,13 @@ async function searchText(req, res) {
                 total,
                 pages: Math.ceil(total / limitNum),
             },
-        });
+        };
+
+        // Store to cache and send
+        searchListCache.set(cacheKey, payload);
+        res.set("Cache-Control", "public, max-age=15, stale-while-revalidate=30");
+        res.set("X-Cache", "MISS");
+        res.json(payload);
     } catch (e) {
         console.error("Search error:", e);
         res.status(500).json({ error: "Lỗi server khi tìm kiếm" });
@@ -76,17 +91,12 @@ async function downloadImageToBuffer(url) {
 }
 
 async function searchByImage(req, res) {
-    // Đảm bảo bất kỳ hình ảnh tìm kiếm nào được lưu trên đĩa một cách vô tình sẽ bị xóa sau khi xử lý
-    const diskPath = req.file && req.file.path ? req.file.path : null;
     try {
         let buffer = null;
         if (req.file) {
             if (req.file.buffer) {
                 // uploadSearch (memoryStorage)
                 buffer = req.file.buffer;
-            } else if (diskPath) {
-                // fallback if any disk storage is used
-                buffer = await fs.readFile(diskPath);
             }
         } else if (req.body && req.body.url) {
             buffer = await downloadImageToBuffer(req.body.url);
@@ -305,13 +315,6 @@ async function searchByImage(req, res) {
         res.status(500).json({
             error: "Lỗi server khi tìm kiếm theo hình ảnh",
         });
-    } finally {
-        if (diskPath) {
-            try {
-                await fs.remove(diskPath);
-                console.log("[search-by-image] cleaned up temp file:", diskPath);
-            } catch (_) {}
-        }
     }
 }
 
