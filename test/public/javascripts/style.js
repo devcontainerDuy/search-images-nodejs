@@ -360,59 +360,50 @@ function initCustomCursor() {
     document.body.appendChild(cursorDot);
     document.body.appendChild(cursorOutline);
 
-    const prefersReducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const powerSaver = !!window.__powerSaver || prefersReducedMotion;
-
     let mouseX = 0;
     let mouseY = 0;
     let outlineX = 0;
     let outlineY = 0;
-    let rafScheduled = false;
 
     // Mouse movement tracking
-    const onMove = (e) => {
+    document.addEventListener("mousemove", (e) => {
         mouseX = e.clientX;
         mouseY = e.clientY;
-        if (!rafScheduled) {
-            rafScheduled = true;
-            requestAnimationFrame(() => {
-                rafScheduled = false;
-                // Use transforms to avoid layout
-                cursorDot.style.transform = `translate3d(${mouseX}px, ${mouseY}px, 0)`;
-            });
-        }
+
+        // Update dot position immediately
+        cursorDot.style.left = mouseX + "px";
+        cursorDot.style.top = mouseY + "px";
+
         // Create trail effect
-        if (!powerSaver) createTrail(mouseX, mouseY);
-    };
-    document.addEventListener("pointermove", onMove, { passive: true });
+        createTrail(mouseX, mouseY);
+    });
 
     // Smooth outline following
     function animateOutline() {
         outlineX += (mouseX - outlineX) * 0.1;
         outlineY += (mouseY - outlineY) * 0.1;
-        cursorOutline.style.transform = `translate3d(${outlineX}px, ${outlineY}px, 0)`;
+
+        cursorOutline.style.left = outlineX + "px";
+        cursorOutline.style.top = outlineY + "px";
+
         requestAnimationFrame(animateOutline);
     }
     animateOutline();
 
     // Create trail particles
-    let trailCount = 0;
-    const maxTrails = 30;
     function createTrail(x, y) {
         if (Math.random() > 0.7) {
+            // Only create trail sometimes for performance
             const trail = document.createElement("div");
             trail.className = "cursor-trail";
-            trail.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+            trail.style.left = x + "px";
+            trail.style.top = y + "px";
             document.body.appendChild(trail);
-            trailCount++;
-            if (trailCount > maxTrails) {
-                const old = document.querySelector('.cursor-trail');
-                if (old && old.parentNode) { old.parentNode.removeChild(old); trailCount--; }
-            }
+
+            // Remove trail after animation
             setTimeout(() => {
                 if (trail.parentNode) {
                     trail.parentNode.removeChild(trail);
-                    trailCount = Math.max(0, trailCount - 1);
                 }
             }, 500);
         }
@@ -515,11 +506,7 @@ document.addEventListener("DOMContentLoaded", () => {
     
     console.log('🚀 Performance Info:', performanceInfo);
     
-    // Establish power-saver hint before init
-    const prefersReducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    window.__powerSaver = !performanceInfo.isHighPerf || prefersReducedMotion;
-
-    // Always initialize core features (internally adapt to power saver)
+    // Always initialize core features
     createStarsUniverse();
     initCustomCursor();
     
@@ -530,7 +517,7 @@ document.addEventListener("DOMContentLoaded", () => {
         position: fixed;
         top: 15px;
         right: 15px;
-        z-index: 10000;
+        z-index: 10;
         padding: 8px 16px;
         font-size: 12px;
         font-weight: 600;
@@ -545,7 +532,7 @@ document.addEventListener("DOMContentLoaded", () => {
         transition: all 0.3s ease;
     `;
     
-    let isOptimized = window.__powerSaver; // Auto-optimize on lower-end devices
+    let isOptimized = !performanceInfo.isHighPerf; // Auto-optimize on lower-end devices
     
     toggleBtn.addEventListener('click', () => {
         isOptimized = !isOptimized;
