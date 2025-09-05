@@ -26,6 +26,11 @@ uploadForm.addEventListener("submit", async (e) => {
         if (!resp.ok || !data.success) throw new Error(data.error || "Upload thất bại");
         uploadMsg.textContent = "Upload thành công (ID: " + data.imageId + ")";
         uploadMsg.className = "success";
+
+        // Trigger fireworks celebration
+        if (typeof createFireworksCelebration === "function") {
+            createFireworksCelebration();
+        }
     } catch (err) {
         uploadMsg.textContent = err.message;
         uploadMsg.className = "error";
@@ -172,49 +177,49 @@ cameraBtnUnified.addEventListener("click", () => imageInputUnified.click());
 
 // Preview image when selected
 function previewImage(file) {
-    const queryPath = document.getElementById('queryPath');
-    const previewCard = document.getElementById('previewCard');
-    
+    const queryPath = document.getElementById("queryPath");
+    const previewCard = document.getElementById("previewCard");
+
     if (!queryPath || !previewCard) return;
-    
+
     if (file) {
         const reader = new FileReader();
-        reader.onload = function(e) {
+        reader.onload = function (e) {
             queryPath.src = e.target.result;
-            queryPath.style.display = 'block';
-            queryPath.style.width = '100%';
-            queryPath.style.maxWidth = '300px';
-            queryPath.style.height = 'auto';
-            queryPath.style.borderRadius = '8px';
-            previewCard.style.display = 'block';
+            queryPath.style.display = "block";
+            queryPath.style.width = "100%";
+            queryPath.style.maxWidth = "300px";
+            queryPath.style.height = "auto";
+            queryPath.style.borderRadius = "8px";
+            previewCard.style.display = "block";
         };
         reader.readAsDataURL(file);
     } else {
-        queryPath.style.display = 'none';
-        queryPath.src = '';
-        previewCard.style.display = 'none';
+        queryPath.style.display = "none";
+        queryPath.src = "";
+        previewCard.style.display = "none";
     }
 }
 
 // Preview image from URL
 function previewImageFromURL(url) {
-    const queryPath = document.getElementById('queryPath');
-    const previewCard = document.getElementById('previewCard');
-    
+    const queryPath = document.getElementById("queryPath");
+    const previewCard = document.getElementById("previewCard");
+
     if (!queryPath || !previewCard) return;
-    
+
     if (url) {
         queryPath.src = url;
-        queryPath.style.display = 'block';
-        queryPath.style.width = '100%';
-        queryPath.style.maxWidth = '300px';
-        queryPath.style.height = 'auto';
-        queryPath.style.borderRadius = '8px';
-        previewCard.style.display = 'block';
+        queryPath.style.display = "block";
+        queryPath.style.width = "100%";
+        queryPath.style.maxWidth = "300px";
+        queryPath.style.height = "auto";
+        queryPath.style.borderRadius = "8px";
+        previewCard.style.display = "block";
     } else {
-        queryPath.style.display = 'none';
-        queryPath.src = '';
-        previewCard.style.display = 'none';
+        queryPath.style.display = "none";
+        queryPath.src = "";
+        previewCard.style.display = "none";
     }
 }
 
@@ -224,10 +229,10 @@ imageInputUnified.addEventListener("change", async () => {
         previewImage(null); // Hide preview if no file
         return;
     }
-    
+
     // Show preview
     previewImage(file);
-    
+
     resultsInfo.textContent = "Đang tìm bằng ảnh...";
     const fd = new FormData();
     fd.append("image", file);
@@ -254,12 +259,12 @@ unifiedForm.addEventListener("submit", async (e) => {
     const file = imageInputUnified.files[0];
     const imgUrl = imgUrlUnified.value.trim();
     const method = methodSelect.value;
-    
+
     // Show preview for URL if provided and no file selected
     if (imgUrl && !file) {
         previewImageFromURL(imgUrl);
     }
-    
+
     try {
         if (file || imgUrl) {
             // Image-based search
