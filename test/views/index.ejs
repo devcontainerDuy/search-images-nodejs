@@ -109,11 +109,12 @@
                     const idTag = img.imageId || img.id;
                     el.innerHTML = `<img src="${img.url}" alt="" />
                         <div class="meta">
-							<div class="tag">#${idTag}</div>
+								<div class="tag">#${idTag}</div>
                         ${img.title || ""}
                         ${footer ? `<div class="muted">${footer}</div>` : ""}
                         	<div class="flex" style="margin-top:6px">
                         		<button data-id="${idTag}" class="similar-btn">Tìm ảnh tương tự</button>
+                                <button data-id="${idTag}" class="delete-btn btn btn-danger" title="Xóa ảnh">Xóa</button>
                         	</div>
                         </div>`;
                     results.appendChild(el);
@@ -136,6 +137,29 @@
                             });
                         } catch (err) {
                             resultsInfo.textContent = "Lỗi tìm ảnh tương tự: " + err.message;
+                        }
+                    });
+                });
+                // attach delete handlers
+                results.querySelectorAll(".delete-btn").forEach((btn) => {
+                    btn.addEventListener("click", async (ev) => {
+                        const id = ev.currentTarget.getAttribute("data-id");
+                        const card = ev.currentTarget.closest('.item');
+                        if (!id) return;
+                        if (!confirm(`Bạn có chắc muốn xóa ảnh #${id}?`)) return;
+                        const prevText = ev.currentTarget.textContent;
+                        ev.currentTarget.disabled = true;
+                        ev.currentTarget.textContent = 'Đang xóa...';
+                        try {
+                            const resp = await fetch(`/api/image/${id}`, { method: 'DELETE' });
+                            const data = await resp.json();
+                            if (!resp.ok || data?.success !== true) throw new Error(data?.error || 'Xóa thất bại');
+                            if (card) card.remove();
+                            resultsInfo.textContent = `Đã xóa ảnh #${id}`;
+                        } catch (err) {
+                            alert('Lỗi xóa: ' + err.message);
+                            ev.currentTarget.disabled = false;
+                            ev.currentTarget.textContent = prevText;
                         }
                     });
                 });

@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "start": "node ./bin/www",
-    "dev": "nodemon --inspect ./bin/www",
+    "dev": "nodemon --config ./nodemon.json --inspect ./bin/www",
+    "dev:inspect": "nodemon --exec \"node --inspect ./bin/www\"",
     "reindex": "node scripts/reindex.js --hashes",
     "reindex:all": "node scripts/reindex.js --all",
     "recompute-features": "node scripts/recompute_clip_embeddings.js",

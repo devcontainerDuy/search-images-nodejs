@@ -76,22 +76,19 @@ async function downloadImageToBuffer(url) {
 }
 
 async function searchByImage(req, res) {
-    // Ensure any accidentally disk-saved search image is removed after handling
+    // Đảm bảo bất kỳ hình ảnh tìm kiếm nào được lưu trên đĩa một cách vô tình sẽ bị xóa sau khi xử lý
     const diskPath = req.file && req.file.path ? req.file.path : null;
     try {
         let buffer = null;
         if (req.file) {
             if (req.file.buffer) {
                 // uploadSearch (memoryStorage)
-                console.log("[search-by-image] received file in-memory (buffer)");
                 buffer = req.file.buffer;
             } else if (diskPath) {
                 // fallback if any disk storage is used
-                console.warn("[search-by-image] received file on disk at:", diskPath);
                 buffer = await fs.readFile(diskPath);
             }
         } else if (req.body && req.body.url) {
-            console.log("[search-by-image] using remote URL");
             buffer = await downloadImageToBuffer(req.body.url);
         }
         if (!buffer) return res.status(400).json({ error: "Vui lòng upload ảnh hoặc cung cấp url" });
@@ -324,12 +321,16 @@ async function similarById(req, res) {
         if (!Number.isInteger(imageId)) return res.status(400).json({ error: "ID không hợp lệ" });
         const [[imgRow]] = await db.execute("SELECT id, filename, file_path FROM images WHERE id = ? LIMIT 1", [imageId]);
         if (!imgRow) return res.status(404).json({ error: "Không tìm thấy ảnh" });
-        const [hashRows] = await db.execute("SELECT hash FROM image_hashes WHERE image_id = ? AND tile_index = -1 LIMIT 1", [imageId]);
-        let queryHash = hashRows[0]?.hash;
-        if (!queryHash) {
+        // Lấy toàn bộ hash của ảnh truy vấn (global + tiles) để so khớp tốt hơn
+        const [qHashRows] = await db.execute("SELECT tile_index, hash FROM image_hashes WHERE image_id = ?", [imageId]);
+        let queryHashes = qHashRows?.map((r) => r.hash) || [];
+        // Đảm bảo luôn có global hash
+        if (!queryHashes.length || !qHashRows.some((r) => r.tile_index === -1)) {
             try {
-                queryHash = await hash.computeDHashHex(imgRow.file_path);
-                await db.execute("INSERT INTO image_hashes (image_id, tile_index, grid, hash, stride) VALUES (?, ?, ?, ?, ?)", [imageId, -1, 0, queryHash, 0]);
+                const qh = await hash.computeDHashHex(imgRow.file_path);
+                queryHashes.unshift(qh);
+                // Lưu global hash để dùng về sau
+                await db.execute("INSERT INTO image_hashes (image_id, tile_index, grid, hash, stride) VALUES (?, ?, ?, ?, ?)", [imageId, -1, 0, qh, 0]);
             } catch (e) {
                 console.error("Failed computing/storing global hash for", imageId, e);
                 return res.status(500).json({ error: "Không thể tính hash cho ảnh" });
@@ -346,7 +347,13 @@ async function similarById(req, res) {
         );
         const byImage = new Map();
         for (const r of rows) {
-            const d = hash.hammingDistanceHex(queryHash, r.hash);
+            // So sánh mỗi hash của ảnh truy vấn với hash ứng viên và lấy khoảng cách nhỏ nhất
+            let bestForRow = Infinity;
+            for (const qh of queryHashes) {
+                const d = hash.hammingDistanceHex(qh, r.hash);
+                if (d < bestForRow) bestForRow = d;
+                if (bestForRow === 0) break;
+            }
             const entry = byImage.get(r.image_id) || {
                 image_id: r.image_id,
                 filename: r.filename,
@@ -356,8 +363,8 @@ async function similarById(req, res) {
                 bestDistance: Infinity,
                 bestTile: null,
             };
-            if (d < entry.bestDistance) {
-                entry.bestDistance = d;
+            if (bestForRow < entry.bestDistance) {
+                entry.bestDistance = bestForRow;
                 entry.bestTile = r.tile_index;
             }
             byImage.set(r.image_id, entry);
@@ -378,7 +385,7 @@ async function similarById(req, res) {
             .sort((a, b) => a.distance - b.distance)
             .slice(0, topK);
         res.json({
-            query: { imageId, hash: queryHash },
+            query: { imageId },
             results,
             info: { threshold, topK },
         });
