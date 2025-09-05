@@ -324,6 +324,73 @@ async function similarById(req, res) {
         if (!Number.isInteger(imageId)) return res.status(400).json({ error: "ID không hợp lệ" });
         const [[imgRow]] = await db.execute("SELECT id, filename, file_path FROM images WHERE id = ? LIMIT 1", [imageId]);
         if (!imgRow) return res.status(404).json({ error: "Không tìm thấy ảnh" });
+        const method = (req.query?.method || "hash").toLowerCase();
+
+        // Prefer CLIP route if requested (or auto), using ANN to avoid full DB scan
+        if (method === "clip" || method === "auto") {
+            try {
+                // Fetch or compute query embedding
+                const [embRows] = await db.execute(
+                    "SELECT dim, embedding FROM image_embeddings WHERE image_id = ? AND model = ? LIMIT 1",
+                    [imageId, clip.MODEL_ID]
+                );
+                let qVec = null;
+                if (embRows && embRows.length) {
+                    qVec = JSON.parse(embRows[0].embedding);
+                } else {
+                    qVec = await clip.computeClipEmbedding(imgRow.file_path);
+                    await db.execute(
+                        "INSERT INTO image_embeddings (image_id, model, dim, embedding) VALUES (?, ?, ?, ?)",
+                        [imageId, clip.MODEL_ID, qVec.length, JSON.stringify(qVec)]
+                    );
+                    // Rebuild ANN index next time
+                    ann.invalidate();
+                }
+
+                const topK = Number.isFinite(Number(req.query?.topK)) ? Number(req.query.topK) : 20;
+                const minSim = Number.isFinite(Number(req.query?.minSim)) ? Number(req.query.minSim) : 0.25;
+
+                if (ann.isAvailable()) {
+                    const annResults = await ann.annSearch(qVec, topK);
+                    if (annResults && annResults.length) {
+                        return res.json({
+                            method: "clip",
+                            model: clip.MODEL_ID,
+                            results: annResults.filter((r) => r.similarity >= minSim).slice(0, topK),
+                            info: { topK, minSim, ann: true },
+                        });
+                    }
+                }
+
+                // Fallback scan over embeddings if ANN unavailable or empty
+                const [rows] = await db.execute(
+                    `SELECT e.image_id, e.embedding, i.filename, i.original_name, i.title, i.description
+                     FROM image_embeddings e JOIN images i ON i.id = e.image_id WHERE e.model = ? AND e.image_id <> ?`,
+                    [clip.MODEL_ID, imageId]
+                );
+                const results = rows
+                    .map((r) => {
+                        const emb = JSON.parse(r.embedding);
+                        const sim = clip.cosineSimilarity(qVec, emb);
+                        return {
+                            imageId: r.image_id,
+                            url: `/uploads/images/${r.filename}`,
+                            filename: r.filename,
+                            original_name: r.original_name,
+                            title: r.title,
+                            description: r.description,
+                            similarity: Number(sim.toFixed(6)),
+                        };
+                    })
+                    .sort((a, b) => b.similarity - a.similarity)
+                    .filter((r) => r.similarity >= minSim)
+                    .slice(0, topK);
+                return res.json({ method: "clip", model: clip.MODEL_ID, results, info: { topK, minSim, ann: false } });
+            } catch (clipErr) {
+                // fallthrough to hash below
+                console.error("similarById CLIP error, fallback to hash:", clipErr);
+            }
+        }
         // Lấy toàn bộ hash của ảnh truy vấn (global + tiles) để so khớp tốt hơn
         const [qHashRows] = await db.execute("SELECT tile_index, hash FROM image_hashes WHERE image_id = ?", [imageId]);
         let queryHashes = qHashRows?.map((r) => r.hash) || [];
@@ -343,9 +410,9 @@ async function similarById(req, res) {
         const topK = Number.isFinite(Number(req.query?.topK)) ? Number(req.query.topK) : 20;
         const [rows] = await db.execute(
             `
-      SELECT ih.image_id, ih.tile_index, ih.hash, i.filename, i.original_name, i.title, i.description
-      FROM image_hashes ih JOIN images i ON i.id = ih.image_id WHERE ih.image_id <> ?
-    `,
+            SELECT ih.image_id, ih.tile_index, ih.hash, i.filename, i.original_name, i.title, i.description
+            FROM image_hashes ih JOIN images i ON i.id = ih.image_id WHERE ih.image_id <> ?
+        `,
             [imageId]
         );
         const byImage = new Map();
@@ -387,11 +454,7 @@ async function similarById(req, res) {
             .filter((r) => r.distance <= threshold)
             .sort((a, b) => a.distance - b.distance)
             .slice(0, topK);
-        res.json({
-            query: { imageId },
-            results,
-            info: { threshold, topK },
-        });
+        res.json({ method: "hash", query: { imageId }, results, info: { threshold, topK } });
     } catch (e) {
         console.error("Similar-by-id error:", e);
         res.status(500).json({ error: "Lỗi server khi tìm ảnh tương tự" });
