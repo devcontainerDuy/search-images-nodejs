@@ -1,6 +1,7 @@
 const uploadForm = document.getElementById("uploadForm");
 const uploadBtn = document.getElementById("uploadBtn");
 const uploadMsg = document.getElementById("uploadMsg");
+
 uploadForm.addEventListener("submit", async (e) => {
     e.preventDefault();
     uploadMsg.textContent = "";
@@ -62,15 +63,14 @@ function renderImages(list, meta = {}) {
                 : "";
         const idTag = img.imageId || img.id;
         el.innerHTML = `<img src="${img.url}" alt="${img.title || "Ảnh tìm kiếm"}" loading="lazy" />
-                        <button class="remove-card-btn" data-id="${idTag}" title="Gỡ ảnh khỏi danh sách">✕</button>
                         <div class="meta">
-									<div class="tag">#${idTag}</div>
+							<div class="tag">#${idTag}</div>
                         ${img.title || ""}
                         ${footer ? `<div class="muted">${footer}</div>` : ""}
-	                        	<div class="flex" style="margin-top:6px">
-	                        		<button data-id="${idTag}" class="similar-btn">Tìm ảnh tương tự</button>
+                            <div class="flex" style="margin-top:6px">
+                                <button data-id="${idTag}" class="similar-btn">Tìm ảnh tương tự</button>
                                 <button data-id="${idTag}" class="delete-btn btn btn-danger" title="Xóa ảnh">Xóa</button>
-	                        	</div>
+                            </div>
                         </div>`;
         results.appendChild(el);
     });
@@ -117,19 +117,6 @@ function renderImages(list, meta = {}) {
                 alert("Lỗi xóa: " + err.message);
                 ev.currentTarget.disabled = false;
                 ev.currentTarget.textContent = prevText;
-            }
-        });
-    });
-    // attach remove-from-list handlers (client-side only)
-    results.querySelectorAll(".remove-card-btn").forEach((btn) => {
-        btn.addEventListener("click", (ev) => {
-            ev.preventDefault();
-            ev.stopPropagation();
-            const card = ev.currentTarget.closest('.item');
-            if (card) {
-                const id = ev.currentTarget.getAttribute('data-id');
-                card.remove();
-                resultsInfo.textContent = `Đã gỡ ảnh #${id} khỏi danh sách`;
             }
         });
     });
@@ -189,11 +176,29 @@ async function performKeywordSearch(page = 1) {
 
 cameraBtnUnified.addEventListener("click", () => imageInputUnified.click());
 
+// Remove preview button handler
+function rmPreviewBtnHandler() {
+    const removePreviewBtn = document.getElementById("removePreviewBtn");
+
+    if (removePreviewBtn && !removePreviewBtn.__bound) {
+        removePreviewBtn.addEventListener("click", (ev) => {
+            ev.preventDefault();
+            // Clear file and URL inputs, hide preview
+            if (imageInputUnified) imageInputUnified.value = "";
+            if (imgUrlUnified) imgUrlUnified.value = "";
+            queryPath.style.display = "none";
+            queryPath.src = "";
+            previewCard.style.display = "none";
+            resultsInfo.textContent = "Đã gỡ ảnh truy vấn";
+        });
+        removePreviewBtn.__bound = true;
+    }
+}
+
 // Preview image when selected
 function previewImage(file) {
     const queryPath = document.getElementById("queryPath");
     const previewCard = document.getElementById("previewCard");
-    const removePreviewBtn = document.getElementById("removePreviewBtn");
 
     if (!queryPath || !previewCard) return;
 
@@ -215,26 +220,13 @@ function previewImage(file) {
         previewCard.style.display = "none";
     }
 
-    if (removePreviewBtn && !removePreviewBtn.__bound) {
-        removePreviewBtn.addEventListener("click", (ev) => {
-            ev.preventDefault();
-            // Clear file and URL inputs, hide preview
-            if (imageInputUnified) imageInputUnified.value = "";
-            if (imgUrlUnified) imgUrlUnified.value = "";
-            queryPath.style.display = "none";
-            queryPath.src = "";
-            previewCard.style.display = "none";
-            resultsInfo.textContent = "Đã gỡ ảnh truy vấn";
-        });
-        removePreviewBtn.__bound = true;
-    }
+    rmPreviewBtnHandler();
 }
 
 // Preview image from URL
 function previewImageFromURL(url) {
     const queryPath = document.getElementById("queryPath");
     const previewCard = document.getElementById("previewCard");
-    const removePreviewBtn = document.getElementById("removePreviewBtn");
 
     if (!queryPath || !previewCard) return;
 
@@ -252,19 +244,7 @@ function previewImageFromURL(url) {
         previewCard.style.display = "none";
     }
 
-    if (removePreviewBtn && !removePreviewBtn.__bound) {
-        removePreviewBtn.addEventListener("click", (ev) => {
-            ev.preventDefault();
-            // Clear file and URL inputs, hide preview
-            if (imageInputUnified) imageInputUnified.value = "";
-            if (imgUrlUnified) imgUrlUnified.value = "";
-            queryPath.style.display = "none";
-            queryPath.src = "";
-            previewCard.style.display = "none";
-            resultsInfo.textContent = "Đã gỡ ảnh truy vấn";
-        });
-        removePreviewBtn.__bound = true;
-    }
+    rmPreviewBtnHandler();
 }
 
 imageInputUnified.addEventListener("change", async () => {
