@@ -237,9 +237,9 @@ async function searchByImage(req, res) {
         } catch (_) {}
 
         const [rows] = await db.execute(`
-      SELECT ih.image_id, ih.tile_index, ih.hash, i.filename, i.original_name, i.title, i.description
-      FROM image_hashes ih JOIN images i ON i.id = ih.image_id
-    `);
+            SELECT ih.image_id, ih.tile_index, ih.hash, i.filename, i.original_name, i.title, i.description
+            FROM image_hashes ih JOIN images i ON i.id = ih.image_id
+            `);
         const byImage = new Map();
         for (const r of rows) {
             let bestForRow = Infinity;

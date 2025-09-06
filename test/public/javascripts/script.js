@@ -1,327 +1,444 @@
-const uploadForm = document.getElementById("uploadForm");
-const uploadBtn = document.getElementById("uploadBtn");
-const uploadMsg = document.getElementById("uploadMsg");
+// ============ LIGHTWEIGHT SEARCH APP ============
+// Tích hợp cache backend để tương thích với LRUCache service
 
-uploadForm.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    uploadMsg.textContent = "";
-    const file = document.getElementById("imageInput").files[0];
-    if (!file) {
-        uploadMsg.textContent = "Vui lòng chọn ảnh";
-        uploadMsg.className = "error";
-        return;
+class ClientCache {
+    constructor() {
+        this.cache = new Map();
+        this.CACHE_TTL = 30 * 1000; // 30s như backend searchListCache
+        this.MAX_ENTRIES = 100; // Giới hạn memory
     }
-    if (file.size > 10 * 1024 * 1024) {
-        uploadMsg.textContent = "File quá lớn (>10MB)";
-        uploadMsg.className = "error";
-        return;
-    }
-    uploadBtn.disabled = true;
-    const fd = new FormData(uploadForm);
-    try {
-        const resp = await fetch("/api/upload", {
-            method: "POST",
-            body: fd,
-        });
-        const data = await resp.json();
-        if (!resp.ok || !data.success) throw new Error(data.error || "Upload thất bại");
-        uploadMsg.textContent = "Upload thành công (ID: " + data.imageId + ")";
-        uploadMsg.className = "success";
 
-        // Trigger fireworks celebration
-        if (typeof createFireworksCelebration === "function") {
-            createFireworksCelebration();
+    // Tương thích với backend makeSearchKey
+    makeSearchKey({ q = "", page = 1, limit = 20 }) {
+        return `search:list:q=${q}|p=${page}|l=${limit}`;
+    }
+
+    get(key) {
+        const cached = this.cache.get(key);
+        if (!cached || Date.now() - cached.timestamp > this.CACHE_TTL) {
+            this.cache.delete(key);
+            return null;
         }
-    } catch (err) {
-        uploadMsg.textContent = err.message;
-        uploadMsg.className = "error";
-    } finally {
-        uploadBtn.disabled = false;
+        return cached.data;
     }
-});
 
-// Unified search logic (keyword + image)
-const results = document.getElementById("results");
-const resultsInfo = document.getElementById("resultsInfo");
-const paginationEl = document.getElementById("pagination");
-const unifiedForm = document.getElementById("unifiedSearch");
-const methodSelect = document.getElementById("method");
-const cameraBtnUnified = document.getElementById("cameraBtnUnified");
-const imageInputUnified = document.getElementById("imageInputUnified");
-const imgUrlUnified = document.getElementById("imgUrlUnified");
+    set(key, data) {
+        // LRU eviction
+        if (this.cache.size >= this.MAX_ENTRIES) {
+            const firstKey = this.cache.keys().next().value;
+            this.cache.delete(firstKey);
+        }
+        this.cache.set(key, { data, timestamp: Date.now() });
+    }
 
+    clear() { this.cache.clear(); }
+    
+    deleteByPrefix(prefix) {
+        for (const key of this.cache.keys()) {
+            if (key.startsWith(prefix)) this.cache.delete(key);
+        }
+    }
+
+    getStats() {
+        return {
+            size: this.cache.size,
+            maxEntries: this.MAX_ENTRIES,
+            ttl: this.CACHE_TTL + 'ms'
+        };
+    }
+}
+
+// Global instances
+const clientCache = new ClientCache();
+
+// Search endpoints config
+const SEARCH_ENDPOINTS = {
+    clip: "/api/search-by-image?method=clip&minSim=0.25&topK=24",
+    auto: "/api/search-by-image?method=clip&minSim=0.25&topK=24", 
+    color: "/api/search-by-image?method=color&topK=24",
+    hash: "/api/search-by-image?threshold=16&topK=24"
+};
+
+// Debounce utility
+function debounce(func, wait) {
+    let timeout;
+    return (...args) => {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => func(...args), wait);
+    };
+}
+
+// DOM elements cache
+const elements = {
+    uploadForm: document.getElementById("uploadForm"),
+    uploadBtn: document.getElementById("uploadBtn"),
+    uploadMsg: document.getElementById("uploadMsg"),
+    results: document.getElementById("results"),
+    resultsInfo: document.getElementById("resultsInfo"),
+    pagination: document.getElementById("pagination"),
+    unifiedForm: document.getElementById("unifiedSearch"),
+    methodSelect: document.getElementById("method"),
+    imageInput: document.getElementById("imageInputUnified"),
+    imgUrl: document.getElementById("imgUrlUnified"),
+    cameraBtn: document.getElementById("cameraBtnUnified"),
+    queryPath: document.getElementById("queryPath"),
+    previewCard: document.getElementById("previewCard"),
+    queryInput: document.getElementById("q")
+};
+
+// State
+let currentQuery = "";
+let currentPage = 1;
+const currentLimit = 20;
+
+// Optimized render với caching indicator
 function renderImages(list, meta = {}) {
-    results.innerHTML = "";
-    (list || []).forEach((img) => {
+    elements.results.innerHTML = "";
+    
+    if (!list?.length) {
+        elements.results.innerHTML = '<div class="no-results">Không có kết quả</div>';
+        return;
+    }
+
+    const fragment = document.createDocumentFragment();
+    
+    list.forEach(img => {
+        const footer = meta.method === "clip" 
+            ? `Cosine: ${Number(img.similarity ?? 0).toFixed(3)}`
+            : img.distance != null 
+            ? `Hamming: ${img.distance} • Sim: ${Math.round((img.similarity || 0) * 100)}%`
+            : "";
+        
+        const idTag = img.imageId || img.id;
         const el = document.createElement("div");
         el.className = "item";
-        const footer =
-            meta.method === "clip"
-                ? "Cosine: " + Number(img.similarity ?? 0).toFixed(3)
-                : img.distance != null
-                ? "Hamming: " + img.distance + " • Sim: " + Math.round((img.similarity || 0) * 100) + "%"
-                : "";
-        const idTag = img.imageId || img.id;
-        el.innerHTML = `<img src="${img.url}" alt="${img.title || "Ảnh tìm kiếm"}" loading="lazy" />
-                        <div class="meta">
-							<div class="tag">#${idTag}</div>
-                        ${img.title || ""}
-                        ${footer ? `<div class="muted">${footer}</div>` : ""}
-                            <div class="flex" style="margin-top:6px">
-                                <button data-id="${idTag}" class="similar-btn">Tìm ảnh tương tự</button>
-                                <button data-id="${idTag}" class="delete-btn btn btn-danger" title="Xóa ảnh">Xóa</button>
-                            </div>
-                        </div>`;
-        results.appendChild(el);
+        el.innerHTML = `
+            <img src="${img.url}" alt="${img.title || "Ảnh"}" loading="lazy" />
+            <div class="meta">
+                <div class="tag">#${idTag}</div>
+                ${img.title || ""}
+                ${footer ? `<div class="muted">${footer}</div>` : ""}
+                <div class="flex" style="margin-top:6px">
+                    <button data-id="${idTag}" class="similar-btn">Tìm tương tự</button>
+                    <button data-id="${idTag}" class="delete-btn btn btn-danger">Xóa</button>
+                </div>
+            </div>
+        `;
+        fragment.appendChild(el);
     });
-    // attach similar handlers
-    results.querySelectorAll(".similar-btn").forEach((btn) => {
-        btn.addEventListener("click", async (ev) => {
-            const id = ev.currentTarget.getAttribute("data-id");
+
+    elements.results.appendChild(fragment);
+    attachEventHandlers();
+}
+
+// Event handlers cho buttons
+function attachEventHandlers() {
+    // Similar buttons
+    elements.results.querySelectorAll(".similar-btn").forEach(btn => {
+        btn.addEventListener("click", async (e) => {
+            const id = e.target.getAttribute("data-id");
             try {
-                resultsInfo.textContent = "Đang tìm ảnh tương tự...";
-                const r = await fetch("/api/image/" + id + "/similar?threshold=16&topK=24");
+                elements.resultsInfo.textContent = "Đang tìm tương tự...";
+                const r = await fetch(`/api/image/${id}/similar?threshold=16&topK=24`);
                 const data = await r.json();
-                renderImages(data.results || [], {
-                    method: "hash",
-                });
-                // similar-by-id is not paginated
-                if (typeof renderPagination === "function") renderPagination(null);
-                resultsInfo.textContent = "Kết quả ảnh tương tự (" + (data.results?.length || 0) + ")";
-                window.scrollTo({
-                    top: unifiedForm.offsetTop,
-                    behavior: "smooth",
-                });
+                renderImages(data.results || [], { method: "hash" });
+                renderPagination(null);
+                elements.resultsInfo.textContent = `Tìm thấy ${data.results?.length || 0} ảnh tương tự`;
+                scrollToForm();
             } catch (err) {
-                resultsInfo.textContent = "Lỗi tìm ảnh tương tự: " + err.message;
+                elements.resultsInfo.textContent = "Lỗi: " + err.message;
             }
         });
     });
-    // attach delete handlers
-    results.querySelectorAll(".delete-btn").forEach((btn) => {
-        btn.addEventListener("click", async (ev) => {
-            const id = ev.currentTarget.getAttribute("data-id");
-            const card = ev.currentTarget.closest(".item");
-            if (!id) return;
-            if (!confirm(`Bạn có chắc muốn xóa ảnh #${id}?`)) return;
-            const prevText = ev.currentTarget.textContent;
-            ev.currentTarget.disabled = true;
-            ev.currentTarget.textContent = "Đang xóa...";
+
+    // Delete buttons
+    elements.results.querySelectorAll(".delete-btn").forEach(btn => {
+        btn.addEventListener("click", async (e) => {
+            const id = e.target.getAttribute("data-id");
+            const card = e.target.closest(".item");
+            if (!confirm(`Xóa ảnh #${id}?`)) return;
+            
+            const prevText = e.target.textContent;
+            e.target.disabled = true;
+            e.target.textContent = "Xóa...";
+            
             try {
                 const resp = await fetch(`/api/image/${id}`, { method: "DELETE" });
                 const data = await resp.json();
-                if (!resp.ok || data?.success !== true) throw new Error(data?.error || "Xóa thất bại");
-                if (card) card.remove();
-                resultsInfo.textContent = `Đã xóa ảnh #${id}`;
+                if (!resp.ok) throw new Error(data?.error || "Xóa lỗi");
+                card?.remove();
+                elements.resultsInfo.textContent = `Đã xóa #${id}`;
+                clientCache.deleteByPrefix('search:list:'); // Clear cache
             } catch (err) {
-                alert("Lỗi xóa: " + err.message);
-                ev.currentTarget.disabled = false;
-                ev.currentTarget.textContent = prevText;
+                alert("Lỗi: " + err.message);
+                e.target.disabled = false;
+                e.target.textContent = prevText;
             }
         });
     });
 }
 
-// Pagination helpers for keyword search
-let currentQuery = "";
-let currentPage = 1;
-let currentLimit = 20;
-
+// Pagination render
 function renderPagination(pagination) {
-    if (!pagination || !pagination.pages || pagination.pages <= 1) {
-        paginationEl.innerHTML = "";
+    if (!pagination?.pages || pagination.pages <= 1) {
+        elements.pagination.innerHTML = "";
         return;
     }
+
     const { current, pages } = pagination;
-    const maxButtons = 7; // show up to 7 buttons
+    const maxButtons = 5; // Giảm số buttons cho mobile
     let start = Math.max(1, current - Math.floor(maxButtons / 2));
-    let end = start + maxButtons - 1;
-    if (end > pages) {
-        end = pages;
-        start = Math.max(1, end - maxButtons + 1);
-    }
+    let end = Math.min(pages, start + maxButtons - 1);
+    start = Math.max(1, end - maxButtons + 1);
+
     const parts = [];
-    parts.push(`<button class="page-btn" data-page="${current - 1}" ${current === 1 ? "disabled" : ""}>« Trước</button>`);
-    if (start > 1) parts.push(`<button class="page-btn" data-page="1">1</button><span class="page-ellipsis">…</span>`);
+    if (current > 1) parts.push(`<button class="page-btn" data-page="${current - 1}">‹</button>`);
+    
     for (let i = start; i <= end; i++) {
         parts.push(`<button class="page-btn ${i === current ? "active" : ""}" data-page="${i}">${i}</button>`);
     }
-    if (end < pages) parts.push(`<span class="page-ellipsis">…</span><button class="page-btn" data-page="${pages}">${pages}</button>`);
-    parts.push(`<button class="page-btn" data-page="${current + 1}" ${current === pages ? "disabled" : ""}>Sau »</button>`);
-    paginationEl.innerHTML = parts.join("");
-
-    paginationEl.querySelectorAll(".page-btn").forEach((btn) => {
+    
+    if (current < pages) parts.push(`<button class="page-btn" data-page="${current + 1}">›</button>`);
+    
+    elements.pagination.innerHTML = parts.join("");
+    
+    elements.pagination.querySelectorAll(".page-btn").forEach(btn => {
         btn.addEventListener("click", (e) => {
-            const page = parseInt(e.currentTarget.getAttribute("data-page"), 10);
-            if (!page || page === current || page < 1 || page > pages) return;
-            performKeywordSearch(page);
+            const page = parseInt(e.target.getAttribute("data-page"));
+            if (page && page !== current) performKeywordSearch(page);
         });
     });
 }
 
+// Cached keyword search với backend cache integration
 async function performKeywordSearch(page = 1) {
     try {
-        resultsInfo.textContent = "Đang tìm theo từ khóa...";
-        const r = await fetch(`/api/search?q=${encodeURIComponent(currentQuery)}&page=${page}&limit=${currentLimit}`);
-        const data = await r.json();
+        elements.resultsInfo.textContent = "Tìm kiếm...";
+        
+        const cacheKey = clientCache.makeSearchKey({ 
+            q: currentQuery, 
+            page, 
+            limit: currentLimit 
+        });
+        
+        // Check client cache first
+        let data, fromCache = false;
+        const cached = clientCache.get(cacheKey);
+        
+        if (cached) {
+            data = cached;
+            fromCache = true;
+            console.log('🚀 Client cache hit:', cacheKey);
+        } else {
+            // Fetch from server (có thể hit backend cache)
+            const endpoint = `/api/search?q=${encodeURIComponent(currentQuery)}&page=${page}&limit=${currentLimit}`;
+            const r = await fetch(endpoint);
+            data = await r.json();
+            
+            // Cache in client
+            clientCache.set(cacheKey, data);
+        }
+        
         renderImages(data.images || [], { method: "keyword" });
         renderPagination(data.pagination);
         currentPage = data.pagination?.current || page;
-        resultsInfo.textContent = `Tổng: ${data.pagination?.total || 0} • Trang ${currentPage}/${data.pagination?.pages || 1}`;
-        window.scrollTo({ top: unifiedForm.offsetTop, behavior: "smooth" });
+        
+        const cacheIndicator = fromCache ? " 🚀" : "";
+        elements.resultsInfo.textContent = `${data.pagination?.total || 0} ảnh • Trang ${currentPage}/${data.pagination?.pages || 1}${cacheIndicator}`;
+        
+        scrollToForm();
     } catch (err) {
-        resultsInfo.textContent = "Lỗi tìm kiếm: " + err.message;
+        elements.resultsInfo.textContent = "Lỗi: " + err.message;
     }
 }
 
-cameraBtnUnified.addEventListener("click", () => imageInputUnified.click());
+// Debounced search
+const debouncedSearch = debounce((query) => {
+    currentQuery = query;
+    currentPage = 1;
+    performKeywordSearch(1);
+}, 300);
 
-// Remove preview button handler
-function rmPreviewBtnHandler() {
-    const removePreviewBtn = document.getElementById("removePreviewBtn");
-
-    if (removePreviewBtn && !removePreviewBtn.__bound) {
-        removePreviewBtn.addEventListener("click", (ev) => {
-            ev.preventDefault();
-            // Clear file and URL inputs, hide preview
-            if (imageInputUnified) imageInputUnified.value = "";
-            if (imgUrlUnified) imgUrlUnified.value = "";
-            queryPath.style.display = "none";
-            queryPath.src = "";
-            previewCard.style.display = "none";
-            resultsInfo.textContent = "Đã gỡ ảnh truy vấn";
-        });
-        removePreviewBtn.__bound = true;
+// Preview functions
+function showPreview(src) {
+    if (elements.queryPath && elements.previewCard) {
+        elements.queryPath.src = src;
+        elements.queryPath.style.display = "block";
+        elements.previewCard.style.display = "block";
     }
 }
 
-// Preview image when selected
-function previewImage(file) {
-    const queryPath = document.getElementById("queryPath");
-    const previewCard = document.getElementById("previewCard");
-
-    if (!queryPath || !previewCard) return;
-
-    if (file) {
-        const reader = new FileReader();
-        reader.onload = function (e) {
-            queryPath.src = e.target.result;
-            queryPath.style.display = "block";
-            queryPath.style.width = "100%";
-            queryPath.style.maxWidth = "300px";
-            queryPath.style.height = "auto";
-            queryPath.style.borderRadius = "8px";
-            previewCard.style.display = "block";
-        };
-        reader.readAsDataURL(file);
-    } else {
-        queryPath.style.display = "none";
-        queryPath.src = "";
-        previewCard.style.display = "none";
+function hidePreview() {
+    if (elements.queryPath && elements.previewCard) {
+        elements.queryPath.style.display = "none";
+        elements.queryPath.src = "";
+        elements.previewCard.style.display = "none";
     }
-
-    rmPreviewBtnHandler();
 }
 
-// Preview image from URL
-function previewImageFromURL(url) {
-    const queryPath = document.getElementById("queryPath");
-    const previewCard = document.getElementById("previewCard");
-
-    if (!queryPath || !previewCard) return;
-
-    if (url) {
-        queryPath.src = url;
-        queryPath.style.display = "block";
-        queryPath.style.width = "100%";
-        queryPath.style.maxWidth = "300px";
-        queryPath.style.height = "auto";
-        queryPath.style.borderRadius = "8px";
-        previewCard.style.display = "block";
-    } else {
-        queryPath.style.display = "none";
-        queryPath.src = "";
-        previewCard.style.display = "none";
+function scrollToForm() {
+    if (elements.unifiedForm) {
+        window.scrollTo({ top: elements.unifiedForm.offsetTop, behavior: "smooth" });
     }
-
-    rmPreviewBtnHandler();
 }
 
-imageInputUnified.addEventListener("change", async () => {
-    const file = imageInputUnified.files[0];
-    if (!file) {
-        previewImage(null); // Hide preview if no file
-        return;
-    }
+// ============ EVENT BINDINGS ============
 
-    // Show preview
-    previewImage(file);
-
-    resultsInfo.textContent = "Đang tìm bằng ảnh...";
-    const fd = new FormData();
-    fd.append("image", file);
-    const method = methodSelect.value;
-    const ep = method === "clip" || method === "auto" ? "/api/search-by-image?method=clip&minSim=0.25&topK=24" : "/api/search-by-image?threshold=16&topK=24";
-    try {
-        const resp = await fetch(ep, { method: "POST", body: fd });
-        const data = await resp.json();
-        renderImages(data.results || [], {
-            method: data.method || (method === "clip" || method === "auto" ? "clip" : "hash"),
-        });
-        renderPagination(null);
-        resultsInfo.textContent = "Tìm thấy " + (data.results?.length || 0) + " ảnh";
-    } catch (err) {
-        resultsInfo.textContent = "Lỗi tìm kiếm ảnh: " + err.message;
-    }
-    // Note: We don't clear imageInputUnified.value here to keep the preview
-});
-
-unifiedForm.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    results.innerHTML = "";
-    const q = document.getElementById("q").value.trim();
-    const file = imageInputUnified.files[0];
-    const imgUrl = imgUrlUnified.value.trim();
-    const method = methodSelect.value;
-
-    // Show preview for URL if provided and no file selected
-    if (imgUrl && !file) {
-        previewImageFromURL(imgUrl);
-    }
-
-    try {
-        if (file || imgUrl) {
-            // Image-based search
-            resultsInfo.textContent = "Đang tìm bằng ảnh...";
-            let resp;
-            const ep = method === "clip" || method === "auto" ? "/api/search-by-image?method=clip&minSim=0.25&topK=24" : "/api/search-by-image?threshold=16&topK=24";
-            if (file) {
-                const fd = new FormData();
-                fd.append("image", file);
-                resp = await fetch(ep, {
-                    method: "POST",
-                    body: fd,
-                });
-            } else {
-                resp = await fetch(ep, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ url: imgUrl }),
-                });
+// Upload form
+if (elements.uploadForm) {
+    elements.uploadForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        elements.uploadMsg.textContent = "";
+        
+        const file = document.getElementById("imageInput")?.files[0];
+        if (!file) {
+            elements.uploadMsg.textContent = "Chọn ảnh";
+            elements.uploadMsg.className = "error";
+            return;
+        }
+        
+        if (file.size > 10 * 1024 * 1024) {
+            elements.uploadMsg.textContent = "File > 10MB";
+            elements.uploadMsg.className = "error";
+            return;
+        }
+        
+        elements.uploadBtn.disabled = true;
+        
+        try {
+            const fd = new FormData(elements.uploadForm);
+            const resp = await fetch("/api/upload", { method: "POST", body: fd });
+            const data = await resp.json();
+            
+            if (!resp.ok) throw new Error(data.error || "Upload lỗi");
+            
+            elements.uploadMsg.textContent = `Thành công (ID: ${data.imageId})`;
+            elements.uploadMsg.className = "success";
+            
+            // Fireworks celebration
+            if (typeof createFireworksCelebration === "function") {
+                createFireworksCelebration();
             }
+        } catch (err) {
+            elements.uploadMsg.textContent = err.message;
+            elements.uploadMsg.className = "error";
+        } finally {
+            elements.uploadBtn.disabled = false;
+        }
+    });
+}
+
+// Camera button
+if (elements.cameraBtn) {
+    elements.cameraBtn.addEventListener("click", () => elements.imageInput?.click());
+}
+
+// Image input change
+if (elements.imageInput) {
+    elements.imageInput.addEventListener("change", async () => {
+        const file = elements.imageInput.files[0];
+        if (!file) {
+            hidePreview();
+            return;
+        }
+        
+        // Show preview
+        const reader = new FileReader();
+        reader.onload = (e) => showPreview(e.target.result);
+        reader.readAsDataURL(file);
+        
+        // Auto search
+        elements.resultsInfo.textContent = "Tìm bằng ảnh...";
+        const fd = new FormData();
+        fd.append("image", file);
+        const method = elements.methodSelect?.value || "auto";
+        const endpoint = SEARCH_ENDPOINTS[method] || SEARCH_ENDPOINTS.hash;
+        
+        try {
+            const resp = await fetch(endpoint, { method: "POST", body: fd });
             const data = await resp.json();
             renderImages(data.results || [], {
                 method: data.method || (method === "clip" || method === "auto" ? "clip" : "hash"),
             });
-            resultsInfo.textContent = "Tìm thấy " + (data.results?.length || 0) + " ảnh";
-        } else {
-            // Keyword search with pagination - hide preview
-            previewImage(null);
-            currentQuery = q;
-            currentPage = 1;
-            await performKeywordSearch(1);
+            renderPagination(null);
+            elements.resultsInfo.textContent = `${data.results?.length || 0} ảnh`;
+        } catch (err) {
+            elements.resultsInfo.textContent = "Lỗi: " + err.message;
         }
-    } catch (err) {
-        resultsInfo.textContent = "Lỗi tìm kiếm: " + err.message;
+    });
+}
+
+// Unified search form
+if (elements.unifiedForm) {
+    elements.unifiedForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        elements.results.innerHTML = "";
+        
+        const query = elements.queryInput?.value.trim() || "";
+        const file = elements.imageInput?.files[0];
+        const imgUrl = elements.imgUrl?.value.trim() || "";
+        const method = elements.methodSelect?.value || "auto";
+        
+        if (imgUrl && !file) {
+            showPreview(imgUrl);
+        }
+        
+        try {
+            if (file || imgUrl) {
+                // Image search
+                elements.resultsInfo.textContent = "Tìm bằng ảnh...";
+                const endpoint = SEARCH_ENDPOINTS[method] || SEARCH_ENDPOINTS.hash;
+                let resp;
+                
+                if (file) {
+                    const fd = new FormData();
+                    fd.append("image", file);
+                    resp = await fetch(endpoint, { method: "POST", body: fd });
+                } else {
+                    resp = await fetch(endpoint, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ url: imgUrl }),
+                    });
+                }
+                
+                const data = await resp.json();
+                renderImages(data.results || [], {
+                    method: data.method || (method === "clip" || method === "auto" ? "clip" : "hash"),
+                });
+                elements.resultsInfo.textContent = `${data.results?.length || 0} ảnh`;
+            } else if (query) {
+                // Keyword search
+                hidePreview();
+                debouncedSearch(query);
+            }
+        } catch (err) {
+            elements.resultsInfo.textContent = "Lỗi: " + err.message;
+        }
+    });
+}
+
+// Remove preview button
+const removeBtn = document.getElementById("removePreviewBtn");
+if (removeBtn) {
+    removeBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        if (elements.imageInput) elements.imageInput.value = "";
+        if (elements.imgUrl) elements.imgUrl.value = "";
+        hidePreview();
+        elements.resultsInfo.textContent = "Đã gỡ ảnh";
+    });
+}
+
+// Initialize
+document.addEventListener("DOMContentLoaded", () => {
+    console.log('🚀 Lightweight Search App loaded');
+    console.log('💾 Cache config:', clientCache.getStats());
+    
+    // Cache status monitor (development only)
+    if (window.location.hostname === 'localhost') {
+        setInterval(() => {
+            console.log('💾 Cache status:', clientCache.getStats());
+        }, 10000);
     }
 });
