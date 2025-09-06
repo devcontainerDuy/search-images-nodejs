@@ -180,9 +180,9 @@ async function searchByImage(req, res) {
                 return res.status(500).json({ error: "Không thể trích xuất màu từ ảnh truy vấn" });
             }
             const [rows] = await db.execute(`
-        SELECT ic.image_id, ic.variant, ic.histogram, i.filename, i.original_name, i.title, i.description
-        FROM image_colors ic JOIN images i ON i.id = ic.image_id
-      `);
+                    SELECT ic.image_id, ic.variant, ic.histogram, i.filename, i.original_name, i.title, i.description
+                    FROM image_colors ic JOIN images i ON i.id = ic.image_id
+                `);
             const byImage = new Map();
             for (const r of rows) {
                 const hist = JSON.parse(r.histogram);
@@ -330,19 +330,18 @@ async function similarById(req, res) {
         if (method === "clip" || method === "auto") {
             try {
                 // Fetch or compute query embedding
-                const [embRows] = await db.execute(
-                    "SELECT dim, embedding FROM image_embeddings WHERE image_id = ? AND model = ? LIMIT 1",
-                    [imageId, clip.MODEL_ID]
-                );
+                const [embRows] = await db.execute("SELECT dim, embedding FROM image_embeddings WHERE image_id = ? AND model = ? LIMIT 1", [imageId, clip.MODEL_ID]);
                 let qVec = null;
                 if (embRows && embRows.length) {
                     qVec = JSON.parse(embRows[0].embedding);
                 } else {
                     qVec = await clip.computeClipEmbedding(imgRow.file_path);
-                    await db.execute(
-                        "INSERT INTO image_embeddings (image_id, model, dim, embedding) VALUES (?, ?, ?, ?)",
-                        [imageId, clip.MODEL_ID, qVec.length, JSON.stringify(qVec)]
-                    );
+                    await db.execute("INSERT INTO image_embeddings (image_id, model, dim, embedding) VALUES (?, ?, ?, ?)", [
+                        imageId,
+                        clip.MODEL_ID,
+                        qVec.length,
+                        JSON.stringify(qVec),
+                    ]);
                     // Rebuild ANN index next time
                     ann.invalidate();
                 }

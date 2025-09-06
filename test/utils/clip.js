@@ -13,7 +13,7 @@ async function getExtractor() {
             const { pipeline, env } = mod;
             // Optional: allow caching locally
             if (process.env.TRANSFORMERS_CACHE) {
-                env.cacheDir = process.env.TRANSFORMERS_CACHE;
+                env.cacheDir = process.env.TRANSFORMERS_CACHE || "cache";
             }
             env.allowLocalModels = true;
             // Load CLIP image feature extraction pipeline (image tower)

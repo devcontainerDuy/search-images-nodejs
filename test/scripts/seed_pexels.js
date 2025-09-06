@@ -156,7 +156,7 @@ async function insertOne(photo) {
 (async () => {
     try {
         const opts = parseArgs();
-        console.log(`Seeding from Pexels: query='${opts.query}', start page=${opts.page}, per_page=${opts.per_page}, max=${opts.max ?? '∞'}, max_pages=${opts.max_pages ?? '∞'}`);
+        console.log(`Seeding from Pexels: query='${opts.query}', start page=${opts.page}, per_page=${opts.per_page}, max=${opts.max ?? "∞"}, max_pages=${opts.max_pages ?? "∞"}`);
 
         let page = opts.page;
         let pageCount = 0;

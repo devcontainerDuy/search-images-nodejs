@@ -43,12 +43,13 @@
                 <h3>Tìm kiếm</h3>
                 <form id="unifiedSearch" class="flex" enctype="multipart/form-data" style="gap: 8px; align-items: stretch">
                     <input id="q" type="text" placeholder="Nhập từ khóa... (để trống nếu tìm bằng ảnh)" />
-                    <button id="cameraBtnUnified" class="btn btn-search" type="button" title="Tìm bằng hình ảnh"><span>📷</span></button>
+                    <button id="cameraBtnUnified" class="btn btn-search" type="button" title="Tìm bằng hình ảnh">📷</button>
                     <input id="imageInputUnified" name="image" type="file" accept="image/*" style="display: none" />
                     <input id="imgUrlUnified" type="text" placeholder="URL ảnh (tùy chọn)" />
                     <select id="method" title="Phương pháp">
                         <option value="auto" selected>Tự động</option>
                         <option value="hash">Hash</option>
+                        <option value="color">Color</option>
                         <option value="clip">CLIP (ngữ nghĩa)</option>
                     </select>
                     <button id="searchBtn" class="btn btn-grad" type="submit">Tìm</button>
@@ -57,7 +58,10 @@
 
                 <div class="card" id="previewCard" style="margin-top: 12px; display: none;">
                     <h4>🖼️ Ảnh đang tìm kiếm:</h4>
-                    <img id="queryPath" src="" alt="Preview" style="display: none;" loading="lazy">
+                    <div class="preview-wrapper">
+                        <img id="queryPath" src="" alt="Preview" style="display: none;" loading="lazy">
+                        <button id="removePreviewBtn" class="remove-preview-btn" title="Gỡ ảnh truy vấn">✕</button>
+                    </div>
                 </div>
 
                 <div id="resultsInfo" class="muted" style="margin-top: 8px"></div>

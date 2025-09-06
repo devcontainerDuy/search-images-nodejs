@@ -293,6 +293,39 @@ button:disabled::before {
     inset 0 1px 0 rgba(255, 255, 255, 0.8);
 }
 
+/* Remove (hide) button on card */
+.item .remove-card-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(6px);
+  color: #111827;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity .2s ease, transform .2s ease, filter .2s ease;
+  pointer-events: none;
+}
+
+.item:hover .remove-card-btn {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.item .remove-card-btn:hover {
+  filter: brightness(0.98);
+}
+
 .item::before {
   content: '';
   position: absolute;
@@ -812,6 +845,35 @@ select {
   transition: all 0.3s ease;
   overflow: hidden;
   position: relative;
+}
+
+#previewCard .preview-wrapper {
+  position: relative;
+  display: inline-block;
+}
+
+#previewCard .remove-preview-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(6px);
+  color: #111827;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+  opacity: 0.9;
+  transition: filter .2s ease;
+}
+
+#previewCard .remove-preview-btn:hover {
+  filter: brightness(0.95);
 }
 
 #previewCard::before {
