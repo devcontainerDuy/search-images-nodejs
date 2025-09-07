@@ -106,11 +106,7 @@ function renderImages(list, meta = {}) {
         const el = document.createElement("div");
         el.className = "item";
         el.innerHTML = `
-            <img data-src="${
-                img.url
-            }" src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZjBmMGYwIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxNCIgZmlsbD0iIzk5OSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZHk9Ii4zZW0iPkxvYWRpbmcuLi48L3RleHQ+PC9zdmc+" alt="${
-            img.title || "Ảnh tìm kiếm"
-            }" loading="lazy" />
+            <img src="${img.url ? img.url : "data:image/jpeg;base64,"}" alt="${img.title || "Ảnh"}" loading="lazy" />
             <div class="meta">
                 <div class="tag">#${idTag}</div>
                 ${img.title || ""}
@@ -254,6 +250,7 @@ function showPreview(src) {
     if (elements.queryPath && elements.previewCard) {
         elements.queryPath.src = src;
         elements.queryPath.style.display = "block";
+        elements.queryPath.style.maxWidth = "300px";
         elements.previewCard.style.display = "block";
     }
 }
