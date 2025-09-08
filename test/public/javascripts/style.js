@@ -379,8 +379,7 @@ function initCustomCursor() {
         cursorDot.style.left = mouseX + "px";
         cursorDot.style.top = mouseY + "px";
 
-        // Create trail effect
-        createTrail(mouseX, mouseY);
+        // Removed cursor trail particles for performance
     });
 
     // Smooth outline following
@@ -395,24 +394,8 @@ function initCustomCursor() {
     }
     animateOutline();
 
-    // Create trail particles
-    function createTrail(x, y) {
-        if (Math.random() > 0.7) {
-            // Only create trail sometimes for performance
-            const trail = document.createElement("div");
-            trail.className = "cursor-trail";
-            trail.style.left = x + "px";
-            trail.style.top = y + "px";
-            document.body.appendChild(trail);
-
-            // Remove trail after animation
-            setTimeout(() => {
-                if (trail.parentNode) {
-                    trail.parentNode.removeChild(trail);
-                }
-            }, 500);
-        }
-    }
+    // Trail effect disabled (was using setTimeout). Intentionally left blank.
+    function createTrail() {}
 
     // Hover effects on interactive elements
     const interactiveElements = "button, a, input, textarea, select, .btn, .item, .tag, .page-btn, .similar-btn, .delete-btn";
@@ -464,7 +447,7 @@ function initCustomCursor() {
         }, 300);
     });
 
-    // Create click ripple effect
+    // Create click ripple effect (uses animationend instead of setTimeout)
     function createClickRipple(x, y) {
         const ripple = document.createElement("div");
         ripple.style.position = "fixed";
@@ -481,11 +464,11 @@ function initCustomCursor() {
 
         document.body.appendChild(ripple);
 
-        setTimeout(() => {
-            if (ripple.parentNode) {
-                ripple.parentNode.removeChild(ripple);
-            }
-        }, 600);
+        const cleanup = () => {
+            ripple.removeEventListener("animationend", cleanup);
+            if (ripple.parentNode) ripple.parentNode.removeChild(ripple);
+        };
+        ripple.addEventListener("animationend", cleanup);
     }
 
     // Hide cursor when mouse leaves window

@@ -22,9 +22,11 @@ body {
   color: var(--text);
   background: linear-gradient(45deg, #ff6b6b 0%, #4ecdc4 12.5%, #45b7d1 25%, #f9ca24 37.5%, #f0932b 50%, #eb4d4b 62.5%, #6c5ce7 75%, #a29bfe 87.5%, #fd79a8 100%);
   background-size: 400% 400%;
-  animation: rainbow-bg 12s ease-in-out infinite; /* Slower animation - 12s instead of 8s */
+  animation: rainbow-bg 12s ease-in-out infinite;
+  /* Slower animation - 12s instead of 8s */
   min-height: 100vh;
-  will-change: auto; /* Reduce GPU load */
+  will-change: auto;
+  /* Reduce GPU load */
 }
 
 a {
@@ -288,9 +290,13 @@ button:disabled::before {
   backdrop-filter: blur(20px);
   transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
   box-shadow:
-    0 8px 32px -8px rgba(0, 0, 0, 0.12),
-    0 4px 16px -4px rgba(0, 0, 0, 0.08),
-    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+    0 8px 16px -8px rgba(0, 0, 0, 0.10),
+    0 4px 8px -4px rgba(0, 0, 0, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  /* Hiệu năng: chỉ render khi vào viewport, giữ kích thước giả định để tránh layout shift */
+  content-visibility: auto;
+  contain-intrinsic-size: 300px 260px;
+  contain: content;
 }
 
 /* Remove (hide) button on card */
@@ -309,7 +315,7 @@ button:disabled::before {
   color: #111827;
   font-weight: 700;
   line-height: 1;
-  box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
   opacity: 0;
   transform: translateY(-4px);
   transition: opacity .2s ease, transform .2s ease, filter .2s ease;
@@ -686,33 +692,39 @@ select {
   pointer-events: none;
   z-index: -1;
   overflow: hidden;
-  will-change: auto; /* Reduce GPU usage */
+  will-change: auto;
+  /* Reduce GPU usage */
 }
 
 .star {
   position: absolute;
   background: radial-gradient(circle, rgba(255, 255, 255, 1) 0%, rgba(255, 255, 255, 0.8) 50%, transparent 100%);
   border-radius: 50%;
-  animation: twinkle 3s infinite ease-in-out alternate; /* Slower animation */
-  will-change: opacity; /* Only animate opacity */
+  animation: twinkle 3s infinite ease-in-out alternate;
+  /* Slower animation */
+  will-change: opacity;
+  /* Only animate opacity */
 }
 
 .star.small {
   width: 2px;
   height: 2px;
-  box-shadow: 0 0 4px rgba(255, 255, 255, 0.6); /* Reduced glow */
+  box-shadow: 0 0 4px rgba(255, 255, 255, 0.6);
+  /* Reduced glow */
 }
 
 .star.medium {
   width: 3px;
   height: 3px;
-  box-shadow: 0 0 6px rgba(255, 255, 255, 0.7); /* Reduced glow */
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.7);
+  /* Reduced glow */
 }
 
 .star.large {
   width: 4px;
   height: 4px;
-  box-shadow: 0 0 8px rgba(255, 255, 255, 0.8); /* Reduced glow */
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.8);
+  /* Reduced glow */
 }
 
 .shooting-star {
@@ -867,7 +879,7 @@ select {
   color: #111827;
   font-weight: 700;
   line-height: 1;
-  box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
   opacity: 0.9;
   transition: filter .2s ease;
   padding: 5px;
@@ -1255,14 +1267,37 @@ select,
 }
 
 /* Firework colors */
-.firework-red { color: #ff4757; }
-.firework-blue { color: #3742fa; }
-.firework-green { color: #2ed573; }
-.firework-yellow { color: #ffa502; }
-.firework-purple { color: #a55eea; }
-.firework-pink { color: #ff6b81; }
-.firework-orange { color: #ff7f50; }
-.firework-cyan { color: #7bed9f; }
+.firework-red {
+  color: #ff4757;
+}
+
+.firework-blue {
+  color: #3742fa;
+}
+
+.firework-green {
+  color: #2ed573;
+}
+
+.firework-yellow {
+  color: #ffa502;
+}
+
+.firework-purple {
+  color: #a55eea;
+}
+
+.firework-pink {
+  color: #ff6b81;
+}
+
+.firework-orange {
+  color: #ff7f50;
+}
+
+.firework-cyan {
+  color: #7bed9f;
+}
 
 /* Firework animations */
 @keyframes firework-launch {
@@ -1270,6 +1305,7 @@ select,
     transform: translateY(0) scale(1);
     opacity: 1;
   }
+
   100% {
     transform: translateY(-80vh) scale(1.2);
     opacity: 0.8;
@@ -1281,10 +1317,12 @@ select,
     transform: scale(0) rotate(0deg);
     opacity: 1;
   }
+
   50% {
     transform: scale(1.5) rotate(180deg);
     opacity: 0.8;
   }
+
   100% {
     transform: scale(3) rotate(360deg);
     opacity: 0;
@@ -1296,6 +1334,7 @@ select,
     transform: translate(0, 0) scale(1);
     opacity: 1;
   }
+
   100% {
     transform: translate(var(--random-x), var(--random-y)) scale(0.3);
     opacity: 0;
@@ -1307,6 +1346,7 @@ select,
     opacity: 1;
     transform: scaleY(1);
   }
+
   100% {
     opacity: 0;
     transform: scaleY(0);
@@ -1326,7 +1366,7 @@ select,
   font-size: 24px;
   font-weight: bold;
   text-align: center;
-  box-shadow: 
+  box-shadow:
     0 10px 30px rgba(102, 126, 234, 0.3),
     0 0 50px rgba(118, 75, 162, 0.2);
   backdrop-filter: blur(10px);
@@ -1340,24 +1380,73 @@ select,
     transform: translate(-50%, -50%) scale(0) rotate(-10deg);
     opacity: 0;
   }
+
   20% {
     transform: translate(-50%, -50%) scale(1.2) rotate(5deg);
     opacity: 1;
   }
+
   40% {
     transform: translate(-50%, -50%) scale(0.9) rotate(-2deg);
     opacity: 1;
   }
+
   60% {
     transform: translate(-50%, -50%) scale(1.05) rotate(1deg);
     opacity: 1;
   }
+
   80% {
     transform: translate(-50%, -50%) scale(0.98) rotate(0deg);
     opacity: 1;
   }
+
   100% {
     transform: translate(-50%, -50%) scale(1) rotate(0deg);
     opacity: 0;
   }
+}
+
+/* Perf-lite mode: giảm hiệu ứng nặng để tăng FPS khi scroll nhiều items */
+body.perf-lite {
+  animation: none !important;
+  /* Tắt animation nền */
+}
+
+body.perf-lite #starsContainer,
+body.perf-lite #fireworksContainer,
+body.perf-lite .cursor-dot,
+body.perf-lite .cursor-outline,
+body.perf-lite .cursor-trail,
+body.perf-lite .celebration-message {
+  display: none !important;
+}
+
+body.perf-lite .card,
+body.perf-lite .item,
+body.perf-lite .btn,
+body.perf-lite .pagination .page-btn,
+body.perf-lite #previewCard {
+  backdrop-filter: none !important;
+  /* blur rất nặng */
+  transition: none !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08) !important;
+}
+
+body.perf-lite .item:hover,
+body.perf-lite .item:hover img,
+body.perf-lite .btn:hover,
+body.perf-lite .tag:hover,
+body.perf-lite .pagination .page-btn:hover {
+  transform: none !important;
+  filter: none !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08) !important;
+}
+
+/* Giảm độ nặng của hiệu ứng hover trên card khi perf-lite */
+body.perf-lite .item::before,
+body.perf-lite #previewCard::before,
+body.perf-lite .btn::before,
+body.perf-lite .page-btn::before {
+  display: none !important;
 }

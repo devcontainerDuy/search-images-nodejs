@@ -126,7 +126,9 @@ function renderImages(list, meta = {}) {
         const el = document.createElement("div");
         el.className = "item";
         el.innerHTML = `
-            <img src="${img.url ? img.url : "data:image/jpeg;base64,"}" alt="${img.title || "Ảnh"}" loading="lazy" />
+            <img src="${img.url ? img.url : "data:image/jpeg;base64,"}"
+                 alt="${img.title || "Ảnh"}"
+                 loading="lazy" decoding="async" fetchpriority="low" />
             <div class="meta">
                 <div class="tag">#${idTag}</div>
                 ${img.title || ""}
@@ -141,63 +143,19 @@ function renderImages(list, meta = {}) {
     });
 
     elements.results.appendChild(fragment);
-    attachEventHandlers();
+    // Kích hoạt perf-lite nếu quá nhiều item để giữ FPS mượt
+    try {
+        const count = list.length;
+        if (count >= 48) {
+            document.body.classList.add("perf-lite");
+        } else {
+            document.body.classList.remove("perf-lite");
+        }
+    } catch (_) {}
 }
 
 function attachEventHandlers() {
-    // Similar buttons
-    elements.results.querySelectorAll(".similar-btn").forEach((btn) => {
-        btn.addEventListener("click", async (e) => {
-            const id = e.target.getAttribute("data-id");
-            try {
-                elements.resultsInfo.textContent = "Đang tìm tương tự...";
-                let endpoint = `/api/image/${id}/similar?threshold=16&topK=24`;
-                const method = elements.methodSelect?.value || "auto";
-                if (method === "full") {
-                    const combine = (elements.combineSelect?.value || "lexi").toLowerCase();
-                    const restrict = elements.restrictToClip?.checked ? "1" : "0";
-                    const colorVariant = (elements.colorVariant?.value || "multi").toLowerCase();
-                    const lexiEps = Number(elements.lexiEps?.value || 0.02);
-                    const params = new URLSearchParams({ method: "full", topK: "24", minSim: "0.25", combine, restrictToClip: restrict, colorVariant, lexiEps: String(lexiEps) });
-                    endpoint = `/api/image/${id}/similar?` + params.toString();
-                }
-                const r = await fetch(endpoint);
-                const data = await r.json();
-                renderImages(data.results || [], { method: "hash" });
-                renderPagination(null);
-                elements.resultsInfo.textContent = `${data.results?.length || 0} ảnh tương tự`;
-                scrollToForm();
-            } catch (err) {
-                elements.resultsInfo.textContent = "Lỗi: " + err.message;
-            }
-        });
-    });
-
-    // Delete buttons
-    elements.results.querySelectorAll(".delete-btn").forEach((btn) => {
-        btn.addEventListener("click", async (e) => {
-            const id = e.target.getAttribute("data-id");
-            const card = e.target.closest(".item");
-            if (!confirm(`Xóa ảnh #${id}?`)) return;
-
-            const prevText = e.target.textContent;
-            e.target.disabled = true;
-            e.target.textContent = "Xóa...";
-
-            try {
-                const resp = await fetch(`/api/image/${id}`, { method: "DELETE" });
-                const data = await resp.json();
-                if (!resp.ok) throw new Error(data?.error || "Xóa lỗi");
-                card?.remove();
-                elements.resultsInfo.textContent = `Đã xóa #${id}`;
-                clientCache.deleteByPrefix("search:list:");
-            } catch (err) {
-                alert("Lỗi: " + err.message);
-                e.target.disabled = false;
-                e.target.textContent = prevText;
-            }
-        });
-    });
+    /* no-op: replaced by event delegation for performance */
 }
 
 function renderPagination(pagination) {
@@ -457,6 +415,64 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
-    console.log("🚀 Search App loaded");
-    console.log("💾 Cache:", clientCache.getStats());
+    // Event delegation for results actions (reduce listeners -> faster)
+    if (elements.results) {
+        elements.results.addEventListener("click", async (e) => {
+            const target = e.target.closest("button");
+            if (!target) return;
+            const id = target.getAttribute("data-id");
+            if (!id) return;
+
+            if (target.classList.contains("similar-btn")) {
+                try {
+                    elements.resultsInfo.textContent = "Đang tìm tương tự...";
+                    let endpoint = `/api/image/${id}/similar?threshold=16&topK=24`;
+                    const method = elements.methodSelect?.value || "auto";
+                    if (method === "full") {
+                        const combine = (elements.combineSelect?.value || "lexi").toLowerCase();
+                        const restrict = elements.restrictToClip?.checked ? "1" : "0";
+                        const colorVariant = (elements.colorVariant?.value || "multi").toLowerCase();
+                        const lexiEps = Number(elements.lexiEps?.value || 0.02);
+                        const params = new URLSearchParams({ method: "full", topK: "24", minSim: "0.25", combine, restrictToClip: restrict, colorVariant, lexiEps: String(lexiEps) });
+                        endpoint = `/api/image/${id}/similar?` + params.toString();
+                    }
+                    const r = await fetch(endpoint);
+                    const data = await r.json();
+                    renderImages(data.results || [], { method: data.method || "full" });
+                    renderPagination(null);
+                    elements.resultsInfo.textContent = `${data.results?.length || 0} ảnh tương tự`;
+                    scrollToForm();
+                } catch (err) {
+                    elements.resultsInfo.textContent = "Lỗi: " + err.message;
+                }
+                return;
+            }
+
+            if (target.classList.contains("delete-btn")) {
+                const card = target.closest(".item");
+                if (!confirm(`Xóa ảnh #${id}?`)) return;
+                const prevText = target.textContent;
+                target.disabled = true;
+                target.textContent = "Xóa...";
+                try {
+                    const resp = await fetch(`/api/image/${id}`, { method: "DELETE" });
+                    const data = await resp.json();
+                    if (!resp.ok) throw new Error(data?.error || "Xóa lỗi");
+                    card?.remove();
+                    elements.resultsInfo.textContent = `Đã xóa #${id}`;
+                    clientCache.deleteByPrefix("search:list:");
+                } catch (err) {
+                    alert("Lỗi: " + err.message);
+                    target.disabled = false;
+                    target.textContent = prevText;
+                }
+            }
+        });
+    }
+
+    // console.log("🚀 Search App loaded");
+    // console.log("💾 Cache:", clientCache.getStats());
+
+    // currentQuery rỗng -> backend trả danh sách ảnh mới nhất có phân trang
+    performKeywordSearch(1);
 });
