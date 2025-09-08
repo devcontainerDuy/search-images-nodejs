@@ -59,20 +59,22 @@ function buildOptions(q = {}) {
     const restrictToClip = parseBool(q.restrictToClip, true);
     const colorVariant = (q.colorVariant || "multi").toLowerCase();
     const weights = normalizeWeights(q);
-    // Tăng số ứng viên CLIP để đảm bảo không bỏ sót match tốt cho ảnh chất lượng kém
-    const clipCand = Math.max(150, topK * 8);
-    const colorCand = Math.max(80, topK * 4);
-    const hashCand = Math.max(80, topK * 4);
+    // Giữ số ứng viên ở mức hợp lý để đảm bảo hiệu năng
+    const clipCand = Math.max(100, topK * 5);
+    const colorCand = Math.max(60, topK * 3);
+    const hashCand = Math.max(60, topK * 3);
     // Fallback để không bỏ sót match theo hash/color khi CLIP gating quá chặt
     const ensureHashFallback = parseBool(q.ensureHashFallback, true);
     const ensureColorFallback = parseBool(q.ensureColorFallback, true);
-    // Tăng fallback để đảm bảo không bỏ sót các match tốt
-    const hashFallback = Number.isFinite(Number(q.hashFallback)) ? Number(q.hashFallback) : Math.min(120, Math.max(40, Math.floor(hashCand * 0.6)));
-    const colorFallback = Number.isFinite(Number(q.colorFallback)) ? Number(q.colorFallback) : Math.min(100, Math.max(30, Math.floor(colorCand * 0.6)));
+    // Fallback hợp lý để không bỏ sót nhưng vẫn nhanh
+    const hashFallback = Number.isFinite(Number(q.hashFallback)) ? Number(q.hashFallback) : Math.min(80, Math.max(30, Math.floor(hashCand * 0.5)));
+    const colorFallback = Number.isFinite(Number(q.colorFallback)) ? Number(q.colorFallback) : Math.min(60, Math.max(24, Math.floor(colorCand * 0.5)));
     // Ưu tiên các match hash rất mạnh (near-duplicate)
     const hashStrongThreshold = Number.isFinite(Number(q.hashStrongThreshold)) ? Number(q.hashStrongThreshold) : 6;
-    
-    return { topK, minSim, combine, lexiEps, restrictToClip, colorVariant, clipCand, colorCand, hashCand, ensureHashFallback, ensureColorFallback, hashFallback, colorFallback, hashStrongThreshold, ...weights };
+    // Giới hạn kích thước mẫu khi fallback quét toàn bộ để đảm bảo < 1.7s
+    const fallbackHashSample = Number.isFinite(Number(q.fallbackHashSample)) ? Number(q.fallbackHashSample) : 5000;
+    const fallbackColorSample = Number.isFinite(Number(q.fallbackColorSample)) ? Number(q.fallbackColorSample) : 3000;
+    return { topK, minSim, combine, lexiEps, restrictToClip, colorVariant, clipCand, colorCand, hashCand, ensureHashFallback, ensureColorFallback, hashFallback, colorFallback, hashStrongThreshold, fallbackHashSample, fallbackColorSample, ...weights };
 }
 
 // toScoreEntry: chuẩn hoá các khoảng cách/điểm từng kênh thành score tổng hợp

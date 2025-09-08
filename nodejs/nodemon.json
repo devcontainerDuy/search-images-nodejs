@@ -1,0 +1,26 @@
+{
+  "watch": [
+    "app.js",
+    "bin/www",
+    "routes/**/*.js",
+    "controllers/**/*.js",
+    "services/**/*.js",
+    "config/**/*.js",
+    "utils/**/*.js"
+  ],
+  "ext": "js,json,ejs",
+  "ignore": [
+    "node_modules",
+    "public",
+    "uploads"
+  ],
+  "exec": "node --inspect ./bin/www",
+  "legacyWatch": true,
+  "delay": "200ms",
+  "verbose": true,
+  "env": {
+    "NODE_ENV": "development",
+    "DEBUG": "search-images-nodejs:*",
+    "PORT": "3000"
+  }
+}
