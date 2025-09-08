@@ -1,10 +1,10 @@
-var express = require("express");
-var router = express.Router();
+const express = require("express");
+const router = express.Router();
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
 
-const apiController = require("../controllers/api.controller.js");
+const { index, create, deleted } = require("../controllers/api.controller.js");
 
 // Ensure upload directory exists
 const uploadRoot = path.join(__dirname, "..", "public", "uploads", "images");
@@ -37,13 +37,13 @@ const upload = multer({
     },
 });
 
-// Upload multiple images (field name: image)
-router.post("/images", upload.array("image", 50), apiController.uploadImages);
-
 // List images
-router.get("/images", apiController.listImages);
+router.get("/images", index);
+
+// Upload multiple images (field name: image)
+router.post("/images", upload.array("image", 50), create);
 
 // Delete image by id
-router.delete("/images/:id", apiController.deleteImage);
+router.delete("/images/:id", deleted);
 
 module.exports = router;

@@ -5,7 +5,7 @@ const { md5, getDimensions, generateFakeTitle } = require("../utils/helper");
 const { insertImage, getImageById } = require("../models/images");
 
 // List images with pagination
-async function listImages(req, res) {
+async function index(req, res) {
     try {
         const page = Math.max(parseInt(req.query.page || "1", 10), 1);
         const size = Math.min(Math.max(parseInt(req.query.size || "20", 10), 1), 100);
@@ -38,7 +38,7 @@ async function listImages(req, res) {
 }
 
 // create and upload images
-async function uploadImages(req, res) {
+async function create(req, res) {
     try {
         const files = req.files || [];
         if (!files.length) return res.status(400).json({ error: "No files uploaded" });
@@ -90,7 +90,7 @@ async function uploadImages(req, res) {
 }
 
 // Delete image by id
-async function deleteImage(req, res) {
+async function deleted(req, res) {
     try {
         const id = parseInt(req.params.id, 10);
         if (!id) return res.status(400).json({ error: "Invalid id" });
@@ -114,4 +114,4 @@ async function deleteImage(req, res) {
     }
 }
 
-module.exports = { uploadImages, listImages, deleteImage };
+module.exports = { index, create, deleted };
