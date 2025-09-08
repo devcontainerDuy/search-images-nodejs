@@ -45,10 +45,18 @@ const clientCache = new ClientCache();
 
 // Config
 const SEARCH_ENDPOINTS = {
-    clip: "/api/search-by-image?method=clip&minSim=0.25&topK=24",
-    auto: "/api/search-by-image?method=clip&minSim=0.25&topK=24",
-    color: "/api/search-by-image?method=color&topK=24",
-    hash: "/api/search-by-image?threshold=16&topK=24",
+    clip: () => "/api/search-by-image?method=clip&minSim=0.25&topK=24",
+    auto: () => "/api/search-by-image?method=clip&minSim=0.25&topK=24",
+    full: () => {
+        const combine = (document.getElementById("combine")?.value || "lexi").toLowerCase();
+        const restrict = document.getElementById("restrictToClip")?.checked ? "1" : "0";
+        const colorVariant = (document.getElementById("colorVariant")?.value || "multi").toLowerCase();
+        const lexiEps = Number(document.getElementById("lexiEps")?.value || 0.02);
+        const params = new URLSearchParams({ method: "full", topK: "24", minSim: "0.25", combine, restrictToClip: restrict, colorVariant, lexiEps: String(lexiEps) });
+        return "/api/search-by-image?" + params.toString();
+    },
+    color: () => "/api/search-by-image?method=color&topK=24",
+    hash: () => "/api/search-by-image?threshold=16&topK=24",
 };
 
 // Utilities
@@ -70,12 +78,17 @@ const elements = {
     pagination: document.getElementById("pagination"),
     unifiedForm: document.getElementById("unifiedSearch"),
     methodSelect: document.getElementById("method"),
+    combineSelect: document.getElementById("combine"),
+    restrictToClip: document.getElementById("restrictToClip"),
+    colorVariant: document.getElementById("colorVariant"),
+    lexiEps: document.getElementById("lexiEps"),
     imageInput: document.getElementById("imageInputUnified"),
     imgUrl: document.getElementById("imgUrlUnified"),
     cameraBtn: document.getElementById("cameraBtnUnified"),
     queryPath: document.getElementById("queryPath"),
     previewCard: document.getElementById("previewCard"),
     queryInput: document.getElementById("q"),
+    advancedOpts: document.getElementById("advancedOpts"),
 };
 
 // State
@@ -95,12 +108,19 @@ function renderImages(list, meta = {}) {
     const fragment = document.createDocumentFragment();
 
     list.forEach((img) => {
-        const footer =
-            meta.method === "clip"
-                ? `Cosine: ${Number(img.similarity ?? 0).toFixed(3)}`
-                : img.distance != null
-                ? `Hamming: ${img.distance} • Sim: ${Math.round((img.similarity || 0) * 100)}%`
-                : "";
+        let footer = "";
+        if (meta.method === "clip") {
+            footer = `Cosine: ${Number(img.similarity ?? 0).toFixed(3)}`;
+        } else if (meta.method === "full") {
+            const parts = [];
+            if (img.score != null) parts.push(`Score: ${Number(img.score).toFixed(3)}`);
+            if (img.clipSimilarity != null) parts.push(`CLIP: ${Number(img.clipSimilarity).toFixed(3)}`);
+            if (img.colorDistance != null) parts.push(`Color: ${Number(img.colorDistance).toFixed(3)}`);
+            if (img.hashDistance != null) parts.push(`Hash: ${img.hashDistance}`);
+            footer = parts.join(" • ");
+        } else if (img.distance != null) {
+            footer = `Hamming: ${img.distance} • Sim: ${Math.round((img.similarity || 0) * 100)}%`;
+        }
 
         const idTag = img.imageId || img.id;
         const el = document.createElement("div");
@@ -131,7 +151,17 @@ function attachEventHandlers() {
             const id = e.target.getAttribute("data-id");
             try {
                 elements.resultsInfo.textContent = "Đang tìm tương tự...";
-                const r = await fetch(`/api/image/${id}/similar?threshold=16&topK=24`);
+                let endpoint = `/api/image/${id}/similar?threshold=16&topK=24`;
+                const method = elements.methodSelect?.value || "auto";
+                if (method === "full") {
+                    const combine = (elements.combineSelect?.value || "lexi").toLowerCase();
+                    const restrict = elements.restrictToClip?.checked ? "1" : "0";
+                    const colorVariant = (elements.colorVariant?.value || "multi").toLowerCase();
+                    const lexiEps = Number(elements.lexiEps?.value || 0.02);
+                    const params = new URLSearchParams({ method: "full", topK: "24", minSim: "0.25", combine, restrictToClip: restrict, colorVariant, lexiEps: String(lexiEps) });
+                    endpoint = `/api/image/${id}/similar?` + params.toString();
+                }
+                const r = await fetch(endpoint);
                 const data = await r.json();
                 renderImages(data.results || [], { method: "hash" });
                 renderPagination(null);
@@ -320,6 +350,16 @@ document.addEventListener("DOMContentLoaded", () => {
         elements.cameraBtn.addEventListener("click", () => elements.imageInput?.click());
     }
 
+    // Toggle advanced options by method
+    if (elements.methodSelect && elements.advancedOpts) {
+        const syncAdvanced = () => {
+            const m = elements.methodSelect.value;
+            elements.advancedOpts.style.display = m === "full" ? "flex" : "none";
+        };
+        elements.methodSelect.addEventListener("change", syncAdvanced);
+        syncAdvanced();
+    }
+
     // Image input
     if (elements.imageInput) {
         elements.imageInput.addEventListener("change", async () => {
@@ -339,13 +379,14 @@ document.addEventListener("DOMContentLoaded", () => {
             const fd = new FormData();
             fd.append("image", file);
             const method = elements.methodSelect?.value || "auto";
-            const endpoint = SEARCH_ENDPOINTS[method] || SEARCH_ENDPOINTS.hash;
+            const endpointFactory = SEARCH_ENDPOINTS[method] || SEARCH_ENDPOINTS.hash;
+            const endpoint = typeof endpointFactory === "function" ? endpointFactory() : endpointFactory;
 
             try {
                 const resp = await fetch(endpoint, { method: "POST", body: fd });
                 const data = await resp.json();
                 renderImages(data.results || [], {
-                    method: data.method || (method === "clip" || method === "auto" ? "clip" : "hash"),
+                    method: data.method || (method === "full" || method === "auto" ? "full" : "hash"),
                 });
                 renderPagination(null);
                 elements.resultsInfo.textContent = `${data.results?.length || 0} ảnh`;
@@ -372,7 +413,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 if (file || imgUrl) {
                     // Image search
                     elements.resultsInfo.textContent = "Tìm bằng ảnh...";
-                    const endpoint = SEARCH_ENDPOINTS[method] || SEARCH_ENDPOINTS.hash;
+                    const endpointFactory = SEARCH_ENDPOINTS[method] || SEARCH_ENDPOINTS.hash;
+                    const endpoint = typeof endpointFactory === "function" ? endpointFactory() : endpointFactory;
                     let resp;
 
                     if (file) {
@@ -389,7 +431,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
                     const data = await resp.json();
                     renderImages(data.results || [], {
-                        method: data.method || (method === "clip" || method === "auto" ? "clip" : "hash"),
+                        method: data.method || (method === "full" ? "full" : method === "clip" || method === "auto" ? "clip" : "hash"),
                     });
                     elements.resultsInfo.textContent = `${data.results?.length || 0} ảnh`;
                 } else if (query) {

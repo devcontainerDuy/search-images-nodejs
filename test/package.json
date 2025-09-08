@@ -9,7 +9,7 @@
     "reindex": "node scripts/reindex.js --hashes",
     "reindex:all": "node scripts/reindex.js --all",
     "recompute-features": "node scripts/recompute_clip_embeddings.js",
-    "seed:pexels": "node scripts/seed_pexels.js --query=people --per_page=20"
+    "seed:pexels": "node scripts/seed_pexels.js --query=cats --per_page=20"
   },
   "dependencies": {
     "@xenova/transformers": "^2.17.2",
