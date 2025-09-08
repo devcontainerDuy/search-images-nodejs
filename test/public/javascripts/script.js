@@ -125,8 +125,14 @@ function renderImages(list, meta = {}) {
         const idTag = img.imageId || img.id;
         const el = document.createElement("div");
         el.className = "item";
+        const fname = img.filename;
+        const src = fname ? `/uploads/thumbs/640/${fname}` : img.thumbnail || img.url || "";
+        const srcset = fname ? `/uploads/thumbs/320/${fname} 320w, /uploads/thumbs/640/${fname} 640w, /uploads/images/${fname} 1280w` : "";
+        const sizes = "(max-width: 600px) 50vw, (max-width: 900px) 33vw, 240px";
         el.innerHTML = `
-            <img src="${img.url ? img.url : "data:image/jpeg;base64,"}"
+            <img src="${src}"
+                 ${srcset ? `srcset="${srcset}" sizes="${sizes}"` : ""}
+                 onerror="this.onerror=null; this.removeAttribute('srcset'); this.removeAttribute('sizes'); this.src='${img.url || (fname ? `/uploads/images/${fname}` : "")}';"
                  alt="${img.title || "Ảnh"}"
                  loading="lazy" decoding="async" fetchpriority="low" />
             <div class="meta">

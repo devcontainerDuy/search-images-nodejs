@@ -45,7 +45,7 @@ async function searchText(req, res) {
             images: images.map((img) => ({
                 ...img,
                 url: `/uploads/images/${img.filename}`,
-                thumbnail: `/uploads/images/${img.filename}`,
+                thumbnail: `/uploads/thumbs/640/${img.filename}`,
             })),
             pagination: {
                 current: pageNum,

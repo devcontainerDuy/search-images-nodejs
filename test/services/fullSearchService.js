@@ -6,6 +6,7 @@ const colors = require("./colorService");
 const clip = require("./clipService");
 const ann = require("./annService");
 const { computeCenterColorHistograms } = require("../utils/color");
+const { analyzeImageQuality, adjustSearchParams } = require("../utils/imageQuality");
 
 // parseBool: ép kiểu giá trị (string/number/boolean) về boolean, có giá trị mặc định
 function parseBool(v, fallback = false) {
@@ -22,13 +23,14 @@ function normalizeWeights({ clipWeight, colorWeight, hashWeight }) {
         colw = Number(colorWeight),
         hw = Number(hashWeight);
     if (!Number.isFinite(cw) && !Number.isFinite(colw) && !Number.isFinite(hw)) {
-        cw = 0.65;
-        colw = 0.25;
-        hw = 0.1;
+        // Tăng trọng số CLIP lên 85% để ưu tiên ngữ nghĩa rất cao, đặc biệt quan trọng với ảnh mờ
+        cw = 0.85;
+        colw = 0.10;
+        hw = 0.05;
     }
-    cw = Number.isFinite(cw) ? cw : 0.65;
-    colw = Number.isFinite(colw) ? colw : 0.25;
-    hw = Number.isFinite(hw) ? hw : 0.1;
+    cw = Number.isFinite(cw) ? cw : 0.85;
+    colw = Number.isFinite(colw) ? colw : 0.10;
+    hw = Number.isFinite(hw) ? hw : 0.05;
     const sum = cw + colw + hw;
     if (sum > 0) {
         cw /= sum;
@@ -49,6 +51,7 @@ function normalizeWeights({ clipWeight, colorWeight, hashWeight }) {
 // - weights: trọng số của 3 kênh sau khi chuẩn hoá
 function buildOptions(q = {}) {
     const topK = Number.isFinite(Number(q.topK)) ? Number(q.topK) : 20;
+    // Giảm minSim để hỗ trợ ảnh chất lượng kém, mờ
     const minSim = Number.isFinite(Number(q.minSim)) ? Number(q.minSim) : 0.15;
     const combine = (q.combine || "weighted").toLowerCase();
     const lexiEps = Number.isFinite(Number(q.lexiEps)) ? Number(q.lexiEps) : 0.02;
@@ -56,10 +59,20 @@ function buildOptions(q = {}) {
     const restrictToClip = parseBool(q.restrictToClip, true);
     const colorVariant = (q.colorVariant || "multi").toLowerCase();
     const weights = normalizeWeights(q);
-    const clipCand = Math.max(100, topK * 5);
-    const colorCand = Math.max(60, topK * 3);
-    const hashCand = Math.max(60, topK * 3);
-    return { topK, minSim, combine, lexiEps, restrictToClip, colorVariant, clipCand, colorCand, hashCand, ...weights };
+    // Tăng số ứng viên CLIP để đảm bảo không bỏ sót match tốt cho ảnh chất lượng kém
+    const clipCand = Math.max(150, topK * 8);
+    const colorCand = Math.max(80, topK * 4);
+    const hashCand = Math.max(80, topK * 4);
+    // Fallback để không bỏ sót match theo hash/color khi CLIP gating quá chặt
+    const ensureHashFallback = parseBool(q.ensureHashFallback, true);
+    const ensureColorFallback = parseBool(q.ensureColorFallback, true);
+    // Tăng fallback để đảm bảo không bỏ sót các match tốt
+    const hashFallback = Number.isFinite(Number(q.hashFallback)) ? Number(q.hashFallback) : Math.min(120, Math.max(40, Math.floor(hashCand * 0.6)));
+    const colorFallback = Number.isFinite(Number(q.colorFallback)) ? Number(q.colorFallback) : Math.min(100, Math.max(30, Math.floor(colorCand * 0.6)));
+    // Ưu tiên các match hash rất mạnh (near-duplicate)
+    const hashStrongThreshold = Number.isFinite(Number(q.hashStrongThreshold)) ? Number(q.hashStrongThreshold) : 6;
+    
+    return { topK, minSim, combine, lexiEps, restrictToClip, colorVariant, clipCand, colorCand, hashCand, ensureHashFallback, ensureColorFallback, hashFallback, colorFallback, hashStrongThreshold, ...weights };
 }
 
 // toScoreEntry: chuẩn hoá các khoảng cách/điểm từng kênh thành score tổng hợp
@@ -67,13 +80,23 @@ function buildOptions(q = {}) {
 // - colorDist ~ [0..2] (chi-square) -> chuẩn hoá về [0..1]
 // - hashDist ~ [0..64] (Hamming) -> chuẩn hoá về [0..1]
 // - score = w_clip*clipDist + w_color*color + w_hash*hash
+// - Thêm boost cho CLIP similarity cao
 function toScoreEntry(base, clipSim, colorDist, hashDist, weights) {
     const clipDist = 1 - Math.max(0, Math.min(1, clipSim || 0));
     const cRaw = Number.isFinite(colorDist) ? colorDist : 2.0;
     const colorN = Math.min(1, Math.max(0, cRaw / 2.0));
     const hRaw = Number.isFinite(hashDist) ? hashDist : 64;
     const hashN = Math.min(1, Math.max(0, hRaw / 64));
-    const score = weights.clipWeight * clipDist + weights.colorWeight * colorN + weights.hashWeight * hashN;
+    
+    let score = weights.clipWeight * clipDist + weights.colorWeight * colorN + weights.hashWeight * hashN;
+    
+    // Boost cho CLIP similarity cao: nếu CLIP sim >= 0.7, giảm score (tốt hơn)
+    const clipSimValue = clipSim || 0;
+    if (clipSimValue >= 0.7) {
+        const boost = (clipSimValue - 0.7) * 0.5; // Boost factor từ 0 đến 0.15
+        score = score * (1 - boost); // Giảm score (score thấp = rank cao hơn)
+    }
+    
     return {
         ...base,
         clipSimilarity: Number((clipSim || 0).toFixed(6)),
@@ -108,7 +131,7 @@ async function clipCandidatesFromVector(qVec, opts) {
     if (!results || results.length === 0) {
         const [rows] = await db.execute(
             `SELECT e.image_id, e.embedding, i.filename, i.original_name, i.title, i.description
-       FROM image_embeddings e JOIN images i ON i.id = e.image_id WHERE e.model = ?`,
+              FROM image_embeddings e JOIN images i ON i.id = e.image_id WHERE e.model = ?`,
             [clip.MODEL_ID]
         );
         results = rows
@@ -154,16 +177,16 @@ async function colorDistancesForCandidates(qBufferOrPath, opts, restrictIds = nu
         if (opts.colorVariant === "global") {
             const res = await db.execute(
                 `SELECT ic.image_id, ic.variant, ic.histogram, i.filename, i.original_name, i.title, i.description
-         FROM image_colors ic JOIN images i ON i.id = ic.image_id
-         WHERE ic.variant = 'global' AND ic.image_id IN (${placeholders})`,
+                  FROM image_colors ic JOIN images i ON i.id = ic.image_id
+                  WHERE ic.variant = 'global' AND ic.image_id IN (${placeholders})`,
                 ids
             );
             rows = res[0];
         } else {
             const res = await db.execute(
                 `SELECT ic.image_id, ic.variant, ic.histogram, i.filename, i.original_name, i.title, i.description
-         FROM image_colors ic JOIN images i ON i.id = ic.image_id
-         WHERE ic.image_id IN (${placeholders})`,
+                  FROM image_colors ic JOIN images i ON i.id = ic.image_id
+                  WHERE ic.image_id IN (${placeholders})`,
                 ids
             );
             rows = res[0];
@@ -172,13 +195,13 @@ async function colorDistancesForCandidates(qBufferOrPath, opts, restrictIds = nu
         if (opts.colorVariant === "global") {
             const res = await db.execute(
                 `SELECT ic.image_id, ic.variant, ic.histogram, i.filename, i.original_name, i.title, i.description
-         FROM image_colors ic JOIN images i ON i.id = ic.image_id WHERE ic.variant = 'global'`
+                  FROM image_colors ic JOIN images i ON i.id = ic.image_id WHERE ic.variant = 'global'`
             );
             rows = res[0];
         } else {
             const res = await db.execute(
                 `SELECT ic.image_id, ic.variant, ic.histogram, i.filename, i.original_name, i.title, i.description
-         FROM image_colors ic JOIN images i ON i.id = ic.image_id`
+                  FROM image_colors ic JOIN images i ON i.id = ic.image_id`
             );
             rows = res[0];
         }
@@ -276,11 +299,18 @@ async function hashDistancesForCandidates(qBufferOrPath, opts, restrictIds = nul
 }
 
 // searchFullWithBuffer: pipeline full cho ảnh truy vấn từ buffer
-// 1) Tính CLIP -> tạo ứng viên ngữ nghĩa
-// 2) Tính Color/Hash (mặc định chỉ trên tập ứng viên CLIP)
-// 3) Chuẩn hoá và trộn điểm theo weighted|lexi, trả về topK
+// 1) Phân tích chất lượng ảnh và điều chỉnh tham số
+// 2) Tính CLIP -> tạo ứng viên ngữ nghĩa
+// 3) Tính Color/Hash (mặc định chỉ trên tập ứng viên CLIP)
+// 4) Chuẩn hoá và trộn điểm theo weighted|lexi, trả về topK
 async function searchFullWithBuffer(buffer, query = {}) {
-    const opts = buildOptions(query);
+    // Phân tích chất lượng ảnh trước
+    const qualityAnalysis = await analyzeImageQuality(buffer);
+    console.log("Image quality analysis:", qualityAnalysis);
+    
+    // Điều chỉnh tham số dựa trên chất lượng ảnh
+    const adjustedQuery = adjustSearchParams(query, qualityAnalysis);
+    const opts = buildOptions(adjustedQuery);
     const outInfo = {
         topK: opts.topK,
         weights: { clipWeight: opts.clipWeight, colorWeight: opts.colorWeight, hashWeight: opts.hashWeight },
@@ -295,7 +325,9 @@ async function searchFullWithBuffer(buffer, query = {}) {
     let qVec = null;
     try {
         qVec = await clip.computeClipEmbedding(buffer);
+        console.log("CLIP embedding computed successfully, vector length:", qVec ? qVec.length : 0);
     } catch (e) {
+        console.error("CLIP embedding failed:", e);
         /* ignore */
     }
     const candidates = new Map();
@@ -303,11 +335,21 @@ async function searchFullWithBuffer(buffer, query = {}) {
     if (qVec) {
         try {
             const clipRes = await clipCandidatesFromVector(qVec, opts);
+            console.log("CLIP candidates found:", clipRes.length);
             for (const r of clipRes) {
                 candidates.set(r.imageId, { imageId: r.imageId, url: r.url, filename: r.filename, original_name: r.original_name, title: r.title, description: r.description, clipSimilarity: r.similarity });
                 clipIdSet.add(r.imageId);
             }
+            // Log top 3 CLIP results for debugging
+            const top3 = clipRes.slice(0, 3);
+            console.log("Top 3 CLIP candidates:", top3.map(r => ({ 
+                imageId: r.imageId, 
+                filename: r.filename, 
+                similarity: r.similarity,
+                title: r.title 
+            })));
         } catch (e) {
+            console.error("CLIP search error:", e);
             /* ignore */
         }
     }
@@ -315,30 +357,105 @@ async function searchFullWithBuffer(buffer, query = {}) {
     // Color
     try {
         const colorRes = await colorDistancesForCandidates(buffer, opts, opts.restrictToClip ? clipIdSet : null);
+        console.log("Color candidates found:", colorRes.length);
         for (const r of colorRes) {
             const prev = candidates.get(r.imageId) || { imageId: r.imageId, url: r.url, filename: r.filename, original_name: r.original_name, title: r.title, description: r.description };
             prev.colorDistance = r.colorDistance;
             candidates.set(r.imageId, prev);
         }
+        // Fallback: luôn thêm một nhóm nhỏ ứng viên màu tốt nhất toàn kho nếu đang restrict theo CLIP
+        if (opts.restrictToClip && opts.ensureColorFallback) {
+            const fallbackRes = await colorDistancesForCandidates(buffer, { ...opts, colorCand: opts.colorFallback }, null);
+            console.log("Color fallback candidates:", fallbackRes.length);
+            for (const r of fallbackRes) {
+                const prev = candidates.get(r.imageId) || { imageId: r.imageId, url: r.url, filename: r.filename, original_name: r.original_name, title: r.title, description: r.description };
+                if (prev.colorDistance == null || r.colorDistance < prev.colorDistance) prev.colorDistance = r.colorDistance;
+                candidates.set(r.imageId, prev);
+            }
+        }
+        
+        // Nếu CLIP không cho kết quả tốt, mở rộng search bằng color
+        if (clipIdSet.size < 10) {
+            console.log("Low CLIP candidates, expanding with color search");
+            const expandedColorRes = await colorDistancesForCandidates(buffer, { ...opts, colorCand: Math.max(opts.colorCand, 100) }, null);
+            for (const r of expandedColorRes.slice(0, 50)) {
+                const prev = candidates.get(r.imageId) || { imageId: r.imageId, url: r.url, filename: r.filename, original_name: r.original_name, title: r.title, description: r.description };
+                if (prev.colorDistance == null || r.colorDistance < prev.colorDistance) prev.colorDistance = r.colorDistance;
+                candidates.set(r.imageId, prev);
+            }
+        }
     } catch (e) {
+        console.error("Color search error:", e);
         /* ignore */
     }
 
     // Hash
     try {
         const hashRes = await hashDistancesForCandidates(buffer, opts, opts.restrictToClip ? clipIdSet : null);
+        console.log("Hash candidates found:", hashRes.length);
         for (const r of hashRes) {
             const prev = candidates.get(r.imageId) || { imageId: r.imageId, url: r.url, filename: r.filename, original_name: r.original_name, title: r.title, description: r.description };
             prev.hashDistance = r.hashDistance;
             candidates.set(r.imageId, prev);
         }
+        if (opts.restrictToClip && opts.ensureHashFallback) {
+            const fallbackRes = await hashDistancesForCandidates(buffer, { ...opts, hashCand: opts.hashFallback }, null);
+            console.log("Hash fallback candidates:", fallbackRes.length);
+            for (const r of fallbackRes) {
+                const prev = candidates.get(r.imageId) || { imageId: r.imageId, url: r.url, filename: r.filename, original_name: r.original_name, title: r.title, description: r.description };
+                if (prev.hashDistance == null || r.hashDistance < prev.hashDistance) prev.hashDistance = r.hashDistance;
+                candidates.set(r.imageId, prev);
+            }
+        }
+        
+        // Nếu CLIP không cho kết quả tốt, mở rộng search bằng hash
+        if (clipIdSet.size < 10) {
+            console.log("Low CLIP candidates, expanding with hash search");
+            const expandedHashRes = await hashDistancesForCandidates(buffer, { ...opts, hashCand: Math.max(opts.hashCand, 100) }, null);
+            for (const r of expandedHashRes.slice(0, 50)) {
+                const prev = candidates.get(r.imageId) || { imageId: r.imageId, url: r.url, filename: r.filename, original_name: r.original_name, title: r.title, description: r.description };
+                if (prev.hashDistance == null || r.hashDistance < prev.hashDistance) prev.hashDistance = r.hashDistance;
+                candidates.set(r.imageId, prev);
+            }
+        }
     } catch (e) {
+        console.error("Hash search error:", e);
         /* ignore */
     }
 
-    const scored = Array.from(candidates.values()).map((r) => toScoreEntry(r, r.clipSimilarity, r.colorDistance, r.hashDistance, opts));
-    scored.sort((a, b) => (opts.combine === "lexi" ? lexiCompare(a, b, opts.lexiEps) : a.score - b.score));
-    return { results: scored.slice(0, opts.topK), info: outInfo };
+    let scored = Array.from(candidates.values()).map((r) => toScoreEntry(r, r.clipSimilarity, r.colorDistance, r.hashDistance, opts));
+    
+    // Ưu tiên các match CLIP similarity rất cao (>= 0.7) lên trước
+    const highClipMatches = scored
+        .filter((x) => x.clipSimilarity >= 0.7)
+        .sort((a, b) => b.clipSimilarity - a.clipSimilarity || a.score - b.score);
+    
+    // Ưu tiên các match hash rất mạnh (near-duplicate) nhưng không có CLIP cao
+    const strong = scored
+        .filter((x) => x.clipSimilarity < 0.7 && Number.isFinite(x.hashDistance) && x.hashDistance <= opts.hashStrongThreshold)
+        .sort((a, b) => a.hashDistance - b.hashDistance || (a._clipDist - b._clipDist));
+    const rest = scored
+        .filter((x) => x.clipSimilarity < 0.7 && !(Number.isFinite(x.hashDistance) && x.hashDistance <= opts.hashStrongThreshold))
+        .sort((a, b) => (opts.combine === "lexi" ? lexiCompare(a, b, opts.lexiEps) : a.score - b.score));
+    
+    // Sắp xếp cuối cùng: High CLIP matches -> Strong hash matches -> Rest
+    const merged = [...highClipMatches, ...strong, ...rest].slice(0, opts.topK);
+    
+    // Debug logging
+    console.log("Final search results summary:");
+    console.log(`- Total candidates processed: ${candidates.size}`);
+    console.log(`- High CLIP matches (>= 0.7): ${highClipMatches.length}`);
+    console.log(`- Strong hash matches: ${strong.length}`);
+    console.log(`- Regular matches: ${rest.length}`);
+    console.log(`- Returned top ${merged.length} results`);
+    if (merged.length > 0) {
+        console.log("Top 5 final results:");
+        merged.slice(0, 5).forEach((r, i) => {
+            console.log(`  ${i+1}. ${r.filename} - Score: ${r.score}, CLIP: ${r.clipSimilarity || 'N/A'}, Color: ${r.colorDistance || 'N/A'}, Hash: ${r.hashDistance || 'N/A'}`);
+        });
+    }
+    
+    return { results: merged, info: { ...outInfo, qualityAnalysis } };
 }
 
 // searchFullByImageId: pipeline full cho ảnh đã tồn tại trong DB (theo id)
@@ -415,6 +532,16 @@ async function searchFullByImageId(imageId, query = {}) {
                 prev.colorDistance = r.colorDistance;
                 candidates.set(r.imageId, prev);
             }
+            // Fallback: bổ sung top màu toàn kho nếu đang restrict theo CLIP
+            if (opts.restrictToClip && opts.ensureColorFallback) {
+                const fallbackRes = await colorDistancesForCandidates(imgRow2.file_path, { ...opts, colorCand: opts.colorFallback }, null);
+                for (const r of fallbackRes) {
+                    if (r.imageId === imageId) continue;
+                    const prev = candidates.get(r.imageId) || { imageId: r.imageId, url: r.url, filename: r.filename, original_name: r.original_name, title: r.title, description: r.description };
+                    if (prev.colorDistance == null || r.colorDistance < prev.colorDistance) prev.colorDistance = r.colorDistance;
+                    candidates.set(r.imageId, prev);
+                }
+            }
         }
     } catch (e) {
         /* ignore */
@@ -431,14 +558,35 @@ async function searchFullByImageId(imageId, query = {}) {
                 prev.hashDistance = r.hashDistance;
                 candidates.set(r.imageId, prev);
             }
+            if (opts.restrictToClip && opts.ensureHashFallback) {
+                const fallbackRes = await hashDistancesForCandidates(imgRow3.file_path, { ...opts, hashCand: opts.hashFallback }, null);
+                for (const r of fallbackRes) {
+                    if (r.imageId === imageId) continue;
+                    const prev = candidates.get(r.imageId) || { imageId: r.imageId, url: r.url, filename: r.filename, original_name: r.original_name, title: r.title, description: r.description };
+                    if (prev.hashDistance == null || r.hashDistance < prev.hashDistance) prev.hashDistance = r.hashDistance;
+                    candidates.set(r.imageId, prev);
+                }
+            }
         }
     } catch (e) {
         /* ignore */
     }
+    // Build scored list for by-id
+    let scored = Array.from(candidates.values()).map((r) => toScoreEntry(r, r.clipSimilarity, r.colorDistance, r.hashDistance, opts));
 
-    const scored = Array.from(candidates.values()).map((r) => toScoreEntry(r, r.clipSimilarity, r.colorDistance, r.hashDistance, opts));
-    scored.sort((a, b) => (opts.combine === "lexi" ? lexiCompare(a, b, opts.lexiEps) : a.score - b.score));
-    return { results: scored.slice(0, opts.topK), info: outInfo };
+    // Ưu tiên các match CLIP similarity rất cao (>= 0.7) lên trước
+    const highClipMatches = scored
+        .filter((x) => x.clipSimilarity >= 0.7)
+        .sort((a, b) => b.clipSimilarity - a.clipSimilarity || a.score - b.score);
+
+    const strong = scored
+        .filter((x) => x.clipSimilarity < 0.7 && Number.isFinite(x.hashDistance) && x.hashDistance <= opts.hashStrongThreshold)
+        .sort((a, b) => a.hashDistance - b.hashDistance || (a._clipDist - b._clipDist));
+    const rest = scored
+        .filter((x) => x.clipSimilarity < 0.7 && !(Number.isFinite(x.hashDistance) && x.hashDistance <= opts.hashStrongThreshold))
+        .sort((a, b) => (opts.combine === "lexi" ? lexiCompare(a, b, opts.lexiEps) : a.score - b.score));
+    
+    return { results: [...highClipMatches, ...strong, ...rest].slice(0, opts.topK), info: outInfo };
 }
 
 module.exports = {

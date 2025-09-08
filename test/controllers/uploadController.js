@@ -112,6 +112,27 @@ async function uploadImage(req, res) {
             console.error("Color histogram error:", e);
         }
 
+        // Thumbnails (320w, 640w) for fast grid rendering
+        try {
+            const thumbs320Dir = path.join("uploads", "thumbs", "320");
+            const thumbs640Dir = path.join("uploads", "thumbs", "640");
+            await fs.ensureDir(thumbs320Dir);
+            await fs.ensureDir(thumbs640Dir);
+
+            const thumb320 = path.join(thumbs320Dir, req.file.filename);
+            const thumb640 = path.join(thumbs640Dir, req.file.filename);
+
+            await sharp(filePath)
+                .resize({ width: 320, fit: "inside", withoutEnlargement: true })
+                .toFile(thumb320);
+
+            await sharp(filePath)
+                .resize({ width: 640, fit: "inside", withoutEnlargement: true })
+                .toFile(thumb640);
+        } catch (e) {
+            console.error("Thumbnail generation error:", e);
+        }
+
         // Invalidate cached search list results after content changes
         try {
             searchListCache.clear();
@@ -133,7 +154,7 @@ async function getImage(req, res) {
         const [rows] = await db.execute("SELECT * FROM images WHERE id = ?", [req.params.id]);
         if (!rows || rows.length === 0) return res.status(404).json({ error: "Không tìm thấy hình ảnh" });
         const image = rows[0];
-        res.json({ ...image, url: `/uploads/images/${image.filename}` });
+        res.json({ ...image, url: `/uploads/images/${image.filename}`, thumbnail: `/uploads/thumbs/640/${image.filename}` });
     } catch (e) {
         console.error("Get image error:", e);
         res.status(500).json({ error: "Lỗi server" });
