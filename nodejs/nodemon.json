@@ -2,8 +2,9 @@
   "watch": [
     "app.js",
     "bin/www",
-    "routes/**/*.js",
-    "controllers/**/*.js",
+    "routes/**/*.route.js",
+    "controllers/**/*.controller.js",
+    "models/**/*.js",
     "services/**/*.js",
     "config/**/*.js",
     "utils/**/*.js"
