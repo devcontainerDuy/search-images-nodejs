@@ -8,4 +8,8 @@ async function index(req, res, next) {
     });
 }
 
-module.exports = { index };
+async function searchImages(req, res, next) {
+    res.json({ message: "Search images endpoint - to be implemented" });
+}
+
+module.exports = { index, searchImages };

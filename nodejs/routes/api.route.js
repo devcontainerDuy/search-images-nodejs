@@ -5,6 +5,7 @@ const path = require("path");
 const fs = require("fs");
 
 const { index, create, deleted } = require("../controllers/api.controller.js");
+const searchCtrl = require("../controllers/search.controller.js");
 
 // Ensure upload directory exists
 const uploadRoot = path.join(__dirname, "..", "public", "uploads", "images");
@@ -45,5 +46,15 @@ router.post("/images", upload.array("image", 50), create);
 
 // Delete image by id
 router.delete("/images/:id", deleted);
+
+// Search by uploaded image (CLIP)
+router.post("/search", searchCtrl.uploadSearch, searchCtrl.searchByImage);
+
+// Rebuild embeddings for all images (missing for current model)
+router.get("/rebuild-embeddings", searchCtrl.rebuildEmbeddings);
+
+// Stats and augmentation toggle
+router.get("/stats", searchCtrl.stats);
+router.post("/toggle-augmentation", express.json(), searchCtrl.toggleAugmentation);
 
 module.exports = router;
