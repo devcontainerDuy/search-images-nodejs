@@ -7,8 +7,9 @@ const { analyzeImageQuality } = require("../utils/smart-augment");
 const { getEmbeddingsWithImages, getMissingImageIdsForModel, upsertEmbedding } = require("../models/embeddings");
 const { cosine } = require("../utils/clip");
 const { warmModelCache, ensureModelCache, deleteModelCache, getQueryEmbedding, clearQueryCache, clearAllCaches, getCacheStats } = require("../services/cache.service");
+const { getAugmentationEnabled, setAugmentationEnabled } = require("../services/settings.service");
 
-let augmentationEnabled = true; // runtime toggle, applied in embedding
+// Global augmentation lives in settings.service
 let globalStats = {
     totalSearches: 0,
     totalRebuildOperations: 0,
@@ -35,18 +36,23 @@ async function searchByImage(req, res) {
         let min_similarity = Math.max(0, Math.min(1, parseFloat(req.body.min_similarity ?? "0.65")));
         let top_k = Math.max(1, Math.min(200, parseInt(req.body.top_k ?? "50", 10)));
         const category = (req.body.category || "").toString().trim().toLowerCase();
-        const use_augmentation = String(req.body.use_augmentation ?? "true").toLowerCase() === "true";
-        const enable_rerank = String(req.body.enable_rerank ?? "true").toLowerCase() === "true";
-        const rerank_k = Math.max(1, Math.min(50, parseInt(req.body.rerank_k ?? "10", 10)));
-        augmentationEnabled = use_augmentation;
+        // Support 'auto' mode for augmentation (default: auto)
+        const augParam = String(req.body.use_augmentation ?? "auto").toLowerCase();
+        let augmentationMode = augParam === "true" ? true : augParam === "false" ? false : "auto";
+        const enableRerankRaw = String(req.body.enable_rerank ?? "true").toLowerCase();
+        let enable_rerank = ["true", "1", "yes", "on"].includes(enableRerankRaw);
+        let rerank_k = Math.max(1, Math.min(50, parseInt(req.body.rerank_k ?? "10", 10)));
+        // Decide final augmentation for this request, respecting global switch first
+        const globalAug = getAugmentationEnabled();
+        let useAugmentation = globalAug;
 
         // Log search parameters (mirror Python logging)
-        console.log(`🔍 Search request: min_sim=${min_similarity}, top_k=${top_k}, augmentation=${augmentationEnabled}`);
+        console.log(`🔍 Search request: min_sim=${min_similarity}, top_k=${top_k}, augmentation=${augmentationMode}, global=${globalAug}`);
         globalStats.totalSearches++;
 
         const modelId = getModelId();
 
-        // Analyze query image quality to adapt search tolerance
+        // Analyze query image quality to adapt search tolerance and augmentation strategy
         try {
             const analysis = await analyzeImageQuality(req.file.buffer);
             if (analysis) {
@@ -61,14 +67,30 @@ async function searchByImage(req, res) {
                     top_k = Math.min(200, Math.max(top_k, 50));
                     if (oldTop !== top_k) adjustments.push(`top_k ${oldTop}→${top_k}`);
                 }
+                // Decide augmentation with precedence: global -> per-request
+                if (globalAug) {
+                    if (augmentationMode === "auto") {
+                        const severe = analysis.isBlurry || analysis.isNoisy;
+                        const moderate = analysis.isLowContrast || analysis.isDark || analysis.isBright;
+                        useAugmentation = severe || moderate;
+                        if (!severe) rerank_k = Math.min(rerank_k, 3);
+                        adjustments.push(`augmentation ${useAugmentation ? 'on' : 'off'} (auto)`);
+                    } else {
+                        useAugmentation = augmentationMode === true;
+                    }
+                } else {
+                    useAugmentation = false;
+                    adjustments.push('augmentation off (global)');
+                }
                 if (adjustments.length) {
                     console.log(`🎛️ Adaptive search params due to quality: ${adjustments.join(", ")}`);
                 }
+                console.log(`🎚 Final augmentation: ${useAugmentation} (mode=${augmentationMode}, global=${globalAug})`);
             }
         } catch (_) {}
 
         const tFeat0 = Date.now();
-        const { vec: qvec, cached } = await getQueryEmbedding(req.file.buffer, use_augmentation, modelId); // L2-normalized
+        const { vec: qvec, cached } = await getQueryEmbedding(req.file.buffer, useAugmentation, modelId); // L2-normalized
         if (cached) globalStats.cacheHits++;
         else globalStats.cacheMisses++;
         const feature_time = (Date.now() - tFeat0) / 1000;
@@ -80,28 +102,28 @@ async function searchByImage(req, res) {
         const scored = [];
         for (const it of items) {
             // Ensure same dimension
-            if (it.vec && it.vec.length === qvec.length) {
-                const score = cosine(qvec, it.vec);
-                if (score >= min_similarity) {
-                    if (category) {
-                        const tags = (it.tags || "").toString().toLowerCase();
-                        const title = (it.title || "").toString().toLowerCase();
-                        const desc = (it.description || "").toString().toLowerCase();
-                        const match = tags.split(/[\s,;]+/).includes(category) || title.includes(category) || desc.includes(category);
-                        if (!match) continue;
-                    }
-                    scored.push({
-                        image: it.filename,
-                        score,
-                        image_url: `/uploads/images/${it.filename}`,
-                        metadata: {
-                            title: it.title,
-                            description: it.description,
-                            tags: it.tags,
-                            image_id: it.image_id,
-                        },
-                    });
-                }
+            if (!it.vec || it.vec.length !== qvec.length) continue;
+            // Early category filter to avoid unnecessary cosine
+            if (category) {
+                const tags = (it.tags || "").toString().toLowerCase();
+                const title = (it.title || "").toString().toLowerCase();
+                const desc = (it.description || "").toString().toLowerCase();
+                const match = tags.split(/[\s,;]+/).includes(category) || title.includes(category) || desc.includes(category);
+                if (!match) continue;
+            }
+            const score = cosine(qvec, it.vec);
+            if (score >= min_similarity) {
+                scored.push({
+                    image: it.filename,
+                    score,
+                    image_url: `/uploads/images/${it.filename}`,
+                    metadata: {
+                        title: it.title,
+                        description: it.description,
+                        tags: it.tags,
+                        image_id: it.image_id,
+                    },
+                });
             }
         }
         const tSort0 = Date.now();
@@ -122,7 +144,7 @@ async function searchByImage(req, res) {
                     try {
                         const abs = path.join(__dirname, '..', 'public', 'uploads', 'images', r.image);
                         const buf = await fs.readFile(abs);
-                        const vec = await embedImageFromBufferWithAugment(buf, true, true);
+                        const vec = await embedImageFromBufferWithAugment(buf, useAugmentation, true);
                         const s = cosine(qvec, vec);
                         return { ...r, score_rerank: Number(s.toFixed(6)) };
                     } catch (_) {
@@ -156,7 +178,8 @@ async function searchByImage(req, res) {
                 rerank: rerank_time,
                 total: total_time,
             },
-            use_augmentation: augmentationEnabled,
+            use_augmentation: useAugmentation,
+            augmentation_global: globalAug,
             reranked,
             model: modelId,
             cache_stats: {
@@ -215,7 +238,7 @@ async function rebuildEmbeddings(req, res) {
 
             // Process batch embeddings
             if (batchData.length > 0) {
-                const results = await processBatchEmbeddings(batchData, augmentationEnabled);
+                const results = await processBatchEmbeddings(batchData, getAugmentationEnabled());
 
                 // Save to database
                 for (const result of results) {
@@ -275,7 +298,7 @@ async function stats(req, res) {
             device: modelInfo.device,
             model: modelId,
             image_folder: "/uploads/images",
-            augmentation_enabled: augmentationEnabled,
+            augmentation_enabled: getAugmentationEnabled(),
 
             // Enhanced stats (Node.js specific)
             model_info: modelInfo,
@@ -310,8 +333,8 @@ async function stats(req, res) {
 async function toggleAugmentation(req, res) {
     try {
         const enabled = !!req.body?.enabled;
-        const previousState = augmentationEnabled;
-        augmentationEnabled = enabled;
+        const previousState = getAugmentationEnabled();
+        setAugmentationEnabled(enabled);
 
         const statusText = enabled ? "enabled" : "disabled";
         const actionText = enabled ? "bật" : "tắt";
@@ -327,7 +350,7 @@ async function toggleAugmentation(req, res) {
 
         return res.json({
             status: "success",
-            augmentation_enabled: augmentationEnabled,
+            augmentation_enabled: getAugmentationEnabled(),
             previous_state: previousState,
             cache_cleared: previousState !== enabled,
         });
@@ -376,7 +399,7 @@ async function healthCheck(req, res) {
             timestamp: new Date().toISOString(),
             model: modelId,
             model_loaded: modelInfo.loaded,
-            augmentation_enabled: augmentationEnabled,
+            augmentation_enabled: getAugmentationEnabled(),
             uptime: process.uptime(),
             memory: process.memoryUsage(),
         });

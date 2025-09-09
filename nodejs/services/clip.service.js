@@ -8,6 +8,14 @@ const { generateSmartAugmentations, analyzeImageQuality } = require("../utils/sm
 // Configure environment if needed (e.g., local model cache)
 env.localModelPath = path.resolve(__dirname, "./cache");
 env.allowLocalModels = true;
+// Ensure the local model cache directory exists (created at runtime)
+try {
+    if (!fs.existsSync(env.localModelPath)) {
+        fs.mkdirSync(env.localModelPath, { recursive: true });
+    }
+} catch (e) {
+    console.warn("⚠️ Unable to create local model cache dir:", env.localModelPath, e.message);
+}
 
 // Model selection based on performance (mirroring Python logic)
 const getOptimalModel = () => {
@@ -25,6 +33,10 @@ let modelInfo = {
     device: "wasm-cpu",
     loaded: false,
 };
+
+// Debug logging control for embedding steps
+const DEBUG_EMBED = ["1", "true", "yes"].includes(String(process.env.EMBED_LOG || "").toLowerCase());
+const elog = (...args) => { if (DEBUG_EMBED) console.log(...args); };
 
 /**
  * Singleton pipeline để tránh khởi tạo lại nhiều lần.
@@ -124,7 +136,7 @@ async function embedImageFromBufferWithAugment(buffer, useAugment = true, useSma
         const vecs = [];
 
         if (variants.length > 0) {
-            console.log(`🔄 Processing ${variants.length} augmented variants (smart: ${useSmartAugment})...`);
+            elog(`🔄 Processing ${variants.length} augmented variants (smart: ${useSmartAugment})...`);
             for (const img of variants) {
                 try {
                     const v = await embedImageFromImageData(img);
@@ -137,7 +149,7 @@ async function embedImageFromBufferWithAugment(buffer, useAugment = true, useSma
 
         // Fallback to original buffer if augment fails
         if (vecs.length === 0) {
-            console.log("⚠️ Augmentation failed, using original image");
+            elog("⚠️ Augmentation failed, using original image");
             return embedImageFromBuffer(buffer);
         }
 
@@ -152,7 +164,7 @@ async function embedImageFromBufferWithAugment(buffer, useAugment = true, useSma
         for (let i = 0; i < dim; i++) mean[i] /= n;
         l2(mean); // Re-normalize after averaging
 
-        console.log(`✅ Averaged ${n} augmented embeddings with enhanced processing`);
+        elog(`✅ Averaged ${n} augmented embeddings with enhanced processing`);
         return mean;
     } catch (err) {
         console.warn("Augmentation failed, fallback to original:", err.message);

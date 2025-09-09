@@ -118,12 +118,24 @@
                                     <input class="form-control" type="text" name="category" id="category" placeholder="nature, people, animals..." />
                                 </div>
 
-                                <div class="mb-3">
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="checkbox" name="use_augmentation" id="useAugmentation" checked />
-                                        <label class="form-check-label" for="useAugmentation">
-                                            <i class="bi bi-magic"></i> Sử dụng tăng cường AI (6 kỹ thuật)
-                                        </label>
+                                <div class="row">
+                                    <div class="col-12">
+                                        <div class="mb-3">
+                                            <div class="form-check form-switch">
+                                                <input class="form-check-input" type="checkbox" name="enable_rerank" id="enableRerank" checked />
+                                                <label class="form-check-label" for="enableRerank">Rerank Top-K</label>
+                                            </div>
+                                            <div class="input-group mt-2">
+                                                <label class="input-group-text" for="rerankK">Top</label>
+                                                <select class="form-select" name="rerank_k" id="rerankK">
+                                                    <option value="3">3</option>
+                                                    <option value="5" selected>5</option>
+                                                    <option value="10">10</option>
+                                                    <option value="20">20</option>
+                                                </select>
+                                            </div>
+                                            <div class="form-text">Augment là công tắc toàn cục trong tab Cài đặt.</div>
+                                        </div>
                                     </div>
                                 </div>
 
@@ -143,9 +155,18 @@
                                     <div class="alert alert-info">
                                         <h6 class="alert-heading">📊 Kết quả tìm kiếm</h6>
                                         <div><strong>Số ảnh:</strong> <span id="totalResults">0</span></div>
-                                        <div><strong>Thời gian:</strong> <span id="searchTime">0</span>s</div>
-                                        <div><strong>Model:</strong> <span id="modelUsed">-</span></div>
-                                        <div><strong>Augmentation:</strong> <span id="augmentationUsed">-</span></div>
+                                        <div class="row row-cols-2 mt-2">
+                                            <div><strong>Tổng:</strong> <span id="searchTime">0</span>s</div>
+                                            <div><strong>Đặc trưng:</strong> <span id="featureTime">-</span>s</div>
+                                            <div><strong>Similarity:</strong> <span id="similarityTime">-</span>s</div>
+                                            <div><strong>Sắp xếp:</strong> <span id="sortingTime">-</span>s</div>
+                                            <div><strong>Rerank:</strong> <span id="rerankTime">-</span>s</div>
+                                        </div>
+                                        <div class="mt-2"><strong>Model:</strong> <span id="modelUsed">-</span></div>
+                                        <div><strong>Augmentation (kết quả):</strong> <span id="augmentationUsed">-</span></div>
+                                        <div><strong>Augmentation (toàn cục):</strong> <span id="augmentationGlobal">-</span></div>
+                                        <div><strong>Rerank:</strong> <span id="rerankUsed">-</span></div>
+                                        <div><strong>Cache hit:</strong> <span id="cacheHit">-</span></div>
                                     </div>
                                 </div>
                             </div>

@@ -2,6 +2,12 @@
 const { generateAugmentedImageData } = require("../utils/augment");
 const { decode } = require("image-js");
 
+// Debug logging control (disabled by default for performance)
+const DEBUG_SMART_AUGMENT = ["1", "true", "yes"].includes(String(process.env.SMART_AUGMENT_LOG || "").toLowerCase());
+const dlog = (...args) => {
+    if (DEBUG_SMART_AUGMENT) console.log(...args);
+};
+
 /**
  * Analyze image characteristics with enhanced blur and noise detection
  */
@@ -12,6 +18,7 @@ async function analyzeImageQuality(buffer) {
         try {
             img = await decode(buffer);
         } catch (loadError) {
+            // Keep warning to surface real issues, but avoid chatty logs
             console.warn("image-js decode failed:", loadError.message);
             // Return basic analysis without detailed processing
             return getBasicAnalysis();
@@ -47,6 +54,7 @@ async function analyzeImageQuality(buffer) {
 
         return stats;
     } catch (error) {
+        // Keep warnings for operational visibility
         console.warn("Enhanced image analysis failed:", error.message);
         return null;
     }
@@ -58,6 +66,7 @@ function analyzeColorBalance(img) {
         const { data, channels } = img;
         
         if (!data || channels < 3) {
+            // Warn once per call if input is not RGB
             console.warn("Image data not available or not RGB");
             return { r: 0.33, g: 0.33, b: 0.33 };
         }
@@ -190,11 +199,11 @@ async function generateSmartAugmentations(buffer) {
     const analysis = await analyzeImageQuality(buffer);
 
     if (!analysis) {
-        console.log("🔄 Using enhanced default augmentation pipeline");
+        dlog("🔄 Using enhanced default augmentation pipeline");
         return generateAugmentedImageData(buffer);
     }
 
-    console.log("📊 Enhanced Image Analysis:", {
+    dlog("📊 Enhanced Image Analysis:", {
         brightness: analysis.brightness.toFixed(2),
         contrast: analysis.contrast.toFixed(2),
         sharpness: analysis.sharpness.toFixed(2),
@@ -241,13 +250,16 @@ async function generateSmartAugmentations(buffer) {
         recommendations.push("🎨 Color imbalance - temperature/HSV correction");
     }
 
-    console.log("🔧 Smart Recommendations:");
-    recommendations.forEach((rec) => console.log(`   ${rec}`));
+    dlog("🔧 Smart Recommendations:");
+    recommendations.forEach((rec) => dlog(`   ${rec}`));
 
-    // Always use the enhanced augmentation pipeline for better blur/noise handling
-    console.log(`🚀 Applying enhanced augmentation pipeline (15 variants with focus on blur/noise recovery)`);
+    // Decide variant budget based on severity to speed up
+    const severe = analysis.isBlurry || analysis.isNoisy;
+    const moderate = analysis.isLowContrast || analysis.isDark || analysis.isBright;
+    const maxVariants = severe ? 10 : moderate ? 6 : 3;
+    dlog(`🚀 Applying augmentation with maxVariants=${maxVariants}`);
 
-    return generateAugmentedImageData(buffer);
+    return generateAugmentedImageData(buffer, { maxVariants });
 }
 
 /**

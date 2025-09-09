@@ -30,6 +30,8 @@ const ele = {
     searchStats: document.getElementById("searchStats"),
     minSimilarity: document.getElementById("minSimilarity"),
     similarityValue: document.getElementById("similarityValue"),
+    enableRerank: document.getElementById("enableRerank"),
+    rerankK: document.getElementById("rerankK"),
 
     // Settings elements
     statsBtn: document.getElementById("statsBtn"),
@@ -202,12 +204,37 @@ function updateSearchStats(data) {
     document.getElementById("searchTime").textContent = data.timing.total.toFixed(3);
     document.getElementById("modelUsed").textContent = data.model;
     document.getElementById("augmentationUsed").textContent = data.use_augmentation ? "Bật" : "Tắt";
+    // Detailed timing
+    if (data.timing) {
+        const t = data.timing;
+        const safe = (v) => (typeof v === 'number' ? v.toFixed(3) : '-');
+        const ft = document.getElementById('featureTime');
+        const st = document.getElementById('similarityTime');
+        const so = document.getElementById('sortingTime');
+        const rr = document.getElementById('rerankTime');
+        if (ft) ft.textContent = safe(t.feature_extraction);
+        if (st) st.textContent = safe(t.similarity_calculation);
+        if (so) so.textContent = safe(t.sorting);
+        if (rr) rr.textContent = safe(t.rerank);
+    }
+    // Cache info
+    const cacheHit = data?.cache_stats?.cache_hit;
+    const cacheEl = document.getElementById('cacheHit');
+    if (cacheEl) cacheEl.textContent = cacheHit ? 'Yes' : 'No';
+    // Global augmentation info
+    const augGlobalEl = document.getElementById('augmentationGlobal');
+    if (augGlobalEl && typeof data.augmentation_global !== 'undefined') {
+        augGlobalEl.textContent = data.augmentation_global ? 'Bật' : 'Tắt';
+    }
+    // Rerank info
+    const rerankEl = document.getElementById('rerankUsed');
+    if (rerankEl) rerankEl.textContent = data.reranked ? 'Yes' : 'No';
 
     ele.searchStats.style.display = "block";
 }
 
-// System management functions
-async function loadSystemStats() {
+    // System management functions
+    async function loadSystemStats() {
     try {
         const res = await fetch("/api/stats");
         const data = await res.json();
@@ -353,6 +380,15 @@ document.addEventListener("DOMContentLoaded", () => {
         ele.minSimilarity.addEventListener("input", (e) => {
             ele.similarityValue.textContent = e.target.value;
         });
+    }
+
+    // Enable/disable rerankK when toggling rerank
+    if (ele.enableRerank && ele.rerankK) {
+        const syncRerank = () => {
+            ele.rerankK.disabled = !ele.enableRerank.checked;
+        };
+        ele.enableRerank.addEventListener('change', syncRerank);
+        syncRerank();
     }
 
     // Gallery click handlers

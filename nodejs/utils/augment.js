@@ -217,46 +217,22 @@ function applyGaussianBlur(cv, bgr, ksize = 5, sigma = 1.5) {
     return out;
 }
 
-// Enhanced Unsharp masking with multiple scales for better deblurring
-function applyUnsharpMask(cv, bgr, amount = 2.0, radius = 1.5, threshold = 0) {
-    const out = bgr.clone();
-
+// Stable Unsharp Mask using addWeighted (avoids multi-channel threshold issues)
+function applyUnsharpMask(cv, bgr, amount = 1.8, sigma = 1.0) {
     try {
-        // Multi-scale unsharp masking for better blur recovery
-        const scales = [
-            { radius: 0.5, weight: 0.3 },
-            { radius: 1.0, weight: 0.4 },
-            { radius: 2.0, weight: 0.3 },
-        ];
+        const blurred = new cv.Mat();
+        const ksize = Math.max(3, (Math.round(sigma * 6) | 1)); // ensure odd
+        cv.GaussianBlur(bgr, blurred, new cv.Size(ksize, ksize), sigma, sigma, cv.BORDER_DEFAULT);
 
-        for (const scale of scales) {
-            const blurred = new cv.Mat();
-            const ksize = Math.max(3, Math.round(scale.radius * 6) | 1); // Ensure odd
-            cv.GaussianBlur(bgr, blurred, new cv.Size(ksize, ksize), scale.radius);
-
-            const mask = new cv.Mat();
-            cv.subtract(bgr, blurred, mask);
-
-            const weighted = new cv.Mat();
-            cv.convertScaleAbs(mask, weighted, amount * scale.weight, 0);
-
-            cv.add(out, weighted, out);
-
-            blurred.delete();
-            mask.delete();
-            weighted.delete();
-        }
-
-        // Apply threshold if specified
-        if (threshold > 0) {
-            cv.threshold(out, out, threshold, 255, cv.THRESH_TOZERO);
-        }
+        // out = (1 + amount) * bgr + (-amount) * blurred
+        const out = new cv.Mat();
+        cv.addWeighted(bgr, 1 + amount, blurred, -amount, 0, out);
+        blurred.delete();
+        return out;
     } catch (error) {
         console.warn("Unsharp mask failed:", error.message);
         return bgr.clone();
     }
-
-    return out;
 }
 
 // Enhanced bilateral filter with adaptive parameters
@@ -333,13 +309,13 @@ function applyWienerDeconvolution(cv, bgr, kernelSize = 5, noiseVariance = 0.01)
         kernel.delete();
 
         // For now, use enhanced unsharp masking as approximation
-        return applyUnsharpMask(cv, bgr, 2.5, 1.0, 0);
+        return applyUnsharpMask(cv, bgr, 2.0, 1.0);
     } catch (error) {
         if (!WARNED.deconvolutionFailed) {
             console.warn("ℹ️ Deconvolution kernel unavailable in this build; using Unsharp Mask fallback");
             WARNED.deconvolutionFailed = true;
         }
-        return applyUnsharpMask(cv, bgr, 2.0, 1.5, 0);
+        return applyUnsharpMask(cv, bgr, 1.8, 1.2);
     }
 }
 
@@ -460,8 +436,14 @@ function applyBrightness(cv, bgr, alpha, beta) {
     return out;
 }
 
+// Debug logging control for augment (disabled by default)
+const DEBUG_AUGMENT = ["1", "true", "yes"].includes(String(process.env.AUGMENT_LOG || "").toLowerCase());
+const alog = (...args) => { if (DEBUG_AUGMENT) console.log(...args); };
+
 // Enhanced augmentation pipeline focused on blur and noise recovery
-async function generateAugmentedImageData(buffer) {
+// opts: { maxVariants?: number }
+async function generateAugmentedImageData(buffer, opts = {}) {
+    const maxVariants = Math.max(1, Math.min(18, parseInt(opts.maxVariants || 18, 10)));
     const cv = await getCV();
     const imageData = await decodeToImageData(buffer);
 
@@ -469,7 +451,10 @@ async function generateAugmentedImageData(buffer) {
     const variants = [imageData];
     try {
         const geom = await generateGeometricVariants(buffer);
-        for (const v of geom) variants.push(v);
+        for (const v of geom) {
+            if (variants.length >= maxVariants) break;
+            variants.push(v);
+        }
     } catch (_) {}
 
     // If OpenCV is not ready, return geometric-only variants
@@ -479,7 +464,7 @@ async function generateAugmentedImageData(buffer) {
             console.warn("ℹ️ OpenCV.js not initialized; using geometric-only variants");
             WARNED.opencvNotReady = true;
         }
-        return variants;
+        return variants.slice(0, maxVariants);
     }
 
     // Original as BGR mat for further photometric enhancements
@@ -487,76 +472,104 @@ async function generateAugmentedImageData(buffer) {
 
     try {
         // 1. Original (baseline) already included; still push a CV-converted copy for parity
-        variants.push(toImageDataFromBGR(cv, baseBGR));
+        if (variants.length < maxVariants) variants.push(toImageDataFromBGR(cv, baseBGR));
 
         // 2. Enhanced CLAHE for better contrast
-        const claheBGR = applyCLAHE(cv, baseBGR, 4.0, 6);
-        variants.push(toImageDataFromBGR(cv, claheBGR));
-        claheBGR.delete();
+        if (variants.length < maxVariants) {
+            const claheBGR = applyCLAHE(cv, baseBGR, 4.0, 6);
+            variants.push(toImageDataFromBGR(cv, claheBGR));
+            claheBGR.delete();
+        }
 
         // 3. Strong unsharp masking for blur recovery
-        const sharpBGR = applyUnsharpMask(cv, baseBGR, 2.5, 1.2, 0);
-        variants.push(toImageDataFromBGR(cv, sharpBGR));
-        sharpBGR.delete();
+        if (variants.length < maxVariants) {
+            const sharpBGR = applyUnsharpMask(cv, baseBGR, 2.2, 1.2);
+            variants.push(toImageDataFromBGR(cv, sharpBGR));
+            sharpBGR.delete();
+        }
 
         // 4. Mild unsharp masking (alternative)
-        const mildSharpBGR = applyUnsharpMask(cv, baseBGR, 1.8, 0.8, 5);
-        variants.push(toImageDataFromBGR(cv, mildSharpBGR));
-        mildSharpBGR.delete();
+        if (variants.length < maxVariants) {
+            const mildSharpBGR = applyUnsharpMask(cv, baseBGR, 1.4, 0.8);
+            variants.push(toImageDataFromBGR(cv, mildSharpBGR));
+            mildSharpBGR.delete();
+        }
 
         // 5. Advanced denoising for noise reduction
-        const denoiseBGR = applyAdvancedDenoising(cv, baseBGR, 8, 7, 21);
-        variants.push(toImageDataFromBGR(cv, denoiseBGR));
-        denoiseBGR.delete();
+        if (variants.length < maxVariants) {
+            const denoiseBGR = applyAdvancedDenoising(cv, baseBGR, 8, 7, 21);
+            variants.push(toImageDataFromBGR(cv, denoiseBGR));
+            denoiseBGR.delete();
+        }
 
         // 6. Edge-preserving smoothing
-        const edgeBGR = applyEdgePreservingFilter(cv, baseBGR, 1, 40, 0.3);
-        variants.push(toImageDataFromBGR(cv, edgeBGR));
-        edgeBGR.delete();
+        if (variants.length < maxVariants) {
+            const edgeBGR = applyEdgePreservingFilter(cv, baseBGR, 1, 40, 0.3);
+            variants.push(toImageDataFromBGR(cv, edgeBGR));
+            edgeBGR.delete();
+        }
 
         // 7. Bilateral filter (strong)
-        const bilateralBGR = applyBilateralFilter(cv, baseBGR, 9, 80, 80);
-        variants.push(toImageDataFromBGR(cv, bilateralBGR));
-        bilateralBGR.delete();
+        if (variants.length < maxVariants) {
+            const bilateralBGR = applyBilateralFilter(cv, baseBGR, 9, 80, 80);
+            variants.push(toImageDataFromBGR(cv, bilateralBGR));
+            bilateralBGR.delete();
+        }
 
         // 8. Wiener-like deconvolution for motion blur
-        const deconvBGR = applyWienerDeconvolution(cv, baseBGR, 5, 0.01);
-        variants.push(toImageDataFromBGR(cv, deconvBGR));
-        deconvBGR.delete();
+        if (variants.length < maxVariants) {
+            const deconvBGR = applyWienerDeconvolution(cv, baseBGR, 5, 0.01);
+            variants.push(toImageDataFromBGR(cv, deconvBGR));
+            deconvBGR.delete();
+        }
 
         // 9. Color temperature adjustment (cooler) - helps with color cast from blur
-        const coolBGR = adjustColorTemperature(cv, baseBGR, -25);
-        variants.push(toImageDataFromBGR(cv, coolBGR));
-        coolBGR.delete();
+        if (variants.length < maxVariants) {
+            const coolBGR = adjustColorTemperature(cv, baseBGR, -25);
+            variants.push(toImageDataFromBGR(cv, coolBGR));
+            coolBGR.delete();
+        }
 
         // 10. Color temperature adjustment (warmer)
-        const warmBGR = adjustColorTemperature(cv, baseBGR, 25);
-        variants.push(toImageDataFromBGR(cv, warmBGR));
-        warmBGR.delete();
+        if (variants.length < maxVariants) {
+            const warmBGR = adjustColorTemperature(cv, baseBGR, 25);
+            variants.push(toImageDataFromBGR(cv, warmBGR));
+            warmBGR.delete();
+        }
 
         // 11. Gamma correction for exposure (helps with blur from poor lighting)
-        const gammaBGR = adjustGamma(cv, baseBGR, 1.3);
-        variants.push(toImageDataFromBGR(cv, gammaBGR));
-        gammaBGR.delete();
+        if (variants.length < maxVariants) {
+            const gammaBGR = adjustGamma(cv, baseBGR, 1.3);
+            variants.push(toImageDataFromBGR(cv, gammaBGR));
+            gammaBGR.delete();
+        }
 
         // 12. HSV adjustments for color recovery
-        const hsvBGR = adjustHSV(cv, baseBGR, 0, 1.15, 1.08);
-        variants.push(toImageDataFromBGR(cv, hsvBGR));
-        hsvBGR.delete();
+        if (variants.length < maxVariants) {
+            const hsvBGR = adjustHSV(cv, baseBGR, 0, 1.15, 1.08);
+            variants.push(toImageDataFromBGR(cv, hsvBGR));
+            hsvBGR.delete();
+        }
 
         // 13. Global histogram equalization
-        const histEqBGR = applyGlobalHistEq(cv, baseBGR);
-        variants.push(toImageDataFromBGR(cv, histEqBGR));
-        histEqBGR.delete();
+        if (variants.length < maxVariants) {
+            const histEqBGR = applyGlobalHistEq(cv, baseBGR);
+            variants.push(toImageDataFromBGR(cv, histEqBGR));
+            histEqBGR.delete();
+        }
 
         // 14-15. Brightness adjustments (for under/over exposed blurry images)
-        const darkBGR = applyBrightness(cv, baseBGR, 0.8, -8);
-        variants.push(toImageDataFromBGR(cv, darkBGR));
-        darkBGR.delete();
+        if (variants.length < maxVariants) {
+            const darkBGR = applyBrightness(cv, baseBGR, 0.8, -8);
+            variants.push(toImageDataFromBGR(cv, darkBGR));
+            darkBGR.delete();
+        }
 
-        const brightBGR = applyBrightness(cv, baseBGR, 1.2, 12);
-        variants.push(toImageDataFromBGR(cv, brightBGR));
-        brightBGR.delete();
+        if (variants.length < maxVariants) {
+            const brightBGR = applyBrightness(cv, baseBGR, 1.2, 12);
+            variants.push(toImageDataFromBGR(cv, brightBGR));
+            brightBGR.delete();
+        }
     } catch (error) {
         console.warn("Enhanced augmentation error:", error.message);
         // Return at least the original if augmentations fail
@@ -568,9 +581,9 @@ async function generateAugmentedImageData(buffer) {
         baseBGR.delete();
     }
 
-    // Limit to 18 variants to balance performance
-    const limited = variants.slice(0, 18);
-    console.log(`🎨 Generated ${limited.length} enhanced variants (geom + blur/noise focused)`);
+    // Limit variants to balance performance
+    const limited = variants.slice(0, maxVariants);
+    alog(`🎨 Generated ${limited.length}/${variants.length} variants (max=${maxVariants})`);
     return limited;
 }
 

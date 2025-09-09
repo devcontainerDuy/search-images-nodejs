@@ -6,6 +6,7 @@ const { insertImage, getImageById } = require("../models/images");
 const { upsertEmbedding } = require("../models/embeddings");
 // Import from the working CLIP service
 const { getModelId, embedImageFromBufferWithAugment } = require("../services/clip.service");
+const { getAugmentationEnabled } = require("../services/settings.service");
 // Fallback to simple service if main service fails
 const clipSimple = require("../services/clip.service");
 
@@ -90,12 +91,12 @@ async function create(req, res) {
 
                     try {
                         modelId = getModelId();
-                        embedding = await embedImageFromBufferWithAugment(buffer, true, true); // Use smart augmentation
+                        embedding = await embedImageFromBufferWithAugment(buffer, getAugmentationEnabled(), true); // respect global augment
                     } catch (clipError) {
                         console.warn(`⚠️  Main CLIP service failed for ${meta.filename}, trying fallback:`, clipError.message);
                         // Fallback to simple service
                         modelId = clipSimple.getModelId();
-                        embedding = await clipSimple.embedImageFromBufferWithAugment(buffer, true);
+                        embedding = await clipSimple.embedImageFromBufferWithAugment(buffer, getAugmentationEnabled());
                     }
 
                     // Ensure embedding is in correct format
