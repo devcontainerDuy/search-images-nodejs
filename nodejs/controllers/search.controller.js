@@ -3,6 +3,7 @@ const fs = require("fs/promises");
 const crypto = require("crypto");
 const multer = require("multer");
 const { getModelId, embedImageFromBufferWithAugment, getModelInfo, processBatchEmbeddings } = require("../services/clip.service");
+const { analyzeImageQuality } = require("../utils/smart-augment");
 const { getEmbeddingsWithImages, getMissingImageIdsForModel, upsertEmbedding } = require("../models/embeddings");
 const { cosine } = require("../utils/clip");
 const { warmModelCache, ensureModelCache, deleteModelCache, getQueryEmbedding, clearQueryCache, clearAllCaches, getCacheStats } = require("../services/cache.service");
@@ -31,10 +32,12 @@ async function searchByImage(req, res) {
             return res.status(400).json({ error: "No image uploaded" });
         }
 
-        const min_similarity = Math.max(0, Math.min(1, parseFloat(req.body.min_similarity ?? "0.65")));
-        const top_k = Math.max(1, Math.min(200, parseInt(req.body.top_k ?? "50", 10)));
+        let min_similarity = Math.max(0, Math.min(1, parseFloat(req.body.min_similarity ?? "0.65")));
+        let top_k = Math.max(1, Math.min(200, parseInt(req.body.top_k ?? "50", 10)));
         const category = (req.body.category || "").toString().trim().toLowerCase();
         const use_augmentation = String(req.body.use_augmentation ?? "true").toLowerCase() === "true";
+        const enable_rerank = String(req.body.enable_rerank ?? "true").toLowerCase() === "true";
+        const rerank_k = Math.max(1, Math.min(50, parseInt(req.body.rerank_k ?? "10", 10)));
         augmentationEnabled = use_augmentation;
 
         // Log search parameters (mirror Python logging)
@@ -42,6 +45,27 @@ async function searchByImage(req, res) {
         globalStats.totalSearches++;
 
         const modelId = getModelId();
+
+        // Analyze query image quality to adapt search tolerance
+        try {
+            const analysis = await analyzeImageQuality(req.file.buffer);
+            if (analysis) {
+                const adjustments = [];
+                if (analysis.isBlurry || analysis.isNoisy || analysis.isLowContrast) {
+                    const old = min_similarity;
+                    min_similarity = Math.max(0, min_similarity - 0.05);
+                    adjustments.push(`min_similarity ${old.toFixed(2)}→${min_similarity.toFixed(2)}`);
+                }
+                if (analysis.isBlurry || analysis.isDark || analysis.isBright) {
+                    const oldTop = top_k;
+                    top_k = Math.min(200, Math.max(top_k, 50));
+                    if (oldTop !== top_k) adjustments.push(`top_k ${oldTop}→${top_k}`);
+                }
+                if (adjustments.length) {
+                    console.log(`🎛️ Adaptive search params due to quality: ${adjustments.join(", ")}`);
+                }
+            }
+        } catch (_) {}
 
         const tFeat0 = Date.now();
         const { vec: qvec, cached } = await getQueryEmbedding(req.file.buffer, use_augmentation, modelId); // L2-normalized
@@ -82,9 +106,37 @@ async function searchByImage(req, res) {
         }
         const tSort0 = Date.now();
         scored.sort((a, b) => b.score - a.score);
-        const results = scored.slice(0, top_k).map((r) => ({ ...r, score: Number(r.score.toFixed(6)) }));
+        let results = scored.slice(0, top_k).map((r) => ({ ...r, score: Number(r.score.toFixed(6)) }));
         const similarity_time = (tSort0 - tSim0) / 1000;
         const sorting_time = (Date.now() - tSort0) / 1000;
+
+        // Optional reranking on top-K using robust augmented embeddings
+        let rerank_time = 0;
+        let reranked = false;
+        if (enable_rerank && results.length > 1) {
+            const tR0 = Date.now();
+            const n = Math.min(rerank_k, results.length);
+            try {
+                const fs = require('fs/promises');
+                const updated = await Promise.all(results.slice(0, n).map(async (r) => {
+                    try {
+                        const abs = path.join(__dirname, '..', 'public', 'uploads', 'images', r.image);
+                        const buf = await fs.readFile(abs);
+                        const vec = await embedImageFromBufferWithAugment(buf, true, true);
+                        const s = cosine(qvec, vec);
+                        return { ...r, score_rerank: Number(s.toFixed(6)) };
+                    } catch (_) {
+                        return r;
+                    }
+                }));
+                // Merge updated reranked with the rest and sort by score_rerank if present
+                const merged = [...updated, ...results.slice(n)];
+                merged.sort((a, b) => (b.score_rerank ?? b.score) - (a.score_rerank ?? a.score));
+                results = merged;
+                reranked = true;
+            } catch (_) { /* ignore rerank errors */ }
+            rerank_time = (Date.now() - tR0) / 1000;
+        }
 
         const total_time = (Date.now() - t0) / 1000;
 
@@ -101,9 +153,11 @@ async function searchByImage(req, res) {
                 feature_extraction: feature_time,
                 similarity_calculation: similarity_time,
                 sorting: sorting_time,
+                rerank: rerank_time,
                 total: total_time,
             },
             use_augmentation: augmentationEnabled,
+            reranked,
             model: modelId,
             cache_stats: {
                 cache_hit: cached,

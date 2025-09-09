@@ -13,10 +13,7 @@ env.allowLocalModels = true;
 const getOptimalModel = () => {
     // Try to use larger model if GPU/high-end CPU is available
     // For now, we'll stick with base model for JavaScript compatibility
-    const models = [
-        "Xenova/clip-vit-base-patch32",
-        "Xenova/clip-vit-base-patch16"
-    ];
+    const models = ["Xenova/clip-vit-base-patch32", "Xenova/clip-vit-base-patch16"];
     return process.env.CLIP_MODEL_ID || models[0];
 };
 
@@ -26,7 +23,7 @@ let extractorPromise = null;
 let modelInfo = {
     name: DEFAULT_MODEL_ID,
     device: "wasm-cpu",
-    loaded: false
+    loaded: false,
 };
 
 /**
@@ -37,13 +34,13 @@ async function getExtractor() {
         console.log(`🔄 Loading CLIP model: ${DEFAULT_MODEL_ID}...`);
         const startTime = Date.now();
         extractorPromise = pipeline("image-feature-extraction", DEFAULT_MODEL_ID)
-            .then(pipe => {
+            .then((pipe) => {
                 const loadTime = (Date.now() - startTime) / 1000;
                 console.log(`✅ CLIP model loaded in ${loadTime.toFixed(2)}s`);
                 modelInfo.loaded = true;
                 return pipe;
             })
-            .catch(err => {
+            .catch((err) => {
                 console.error(`❌ Failed to load CLIP model:`, err);
                 extractorPromise = null;
                 throw err;
@@ -75,10 +72,15 @@ async function embedImageFromBuffer(buffer) {
  */
 async function embedImageFromImageData(imageData) {
     const pipe = await getExtractor();
-    const raw = await RawImage.fromImageData(imageData);
+    // RawImage.fromImageData is not available in this version.
+    // Construct a lightweight HWC tensor object for fromTensor.
+    const { data: pixelData, width, height } = imageData;
+    const channels = 4; // RGBA
+    const tensor = { dims: [height, width, channels], data: pixelData };
+    const raw = await RawImage.fromTensor(tensor, 'HWC');
     const out = await pipe(raw);
-    const data = out?.data ?? (Array.isArray(out) ? out[0] : out);
-    const vec = Float32Array.from(data);
+    const outputData = out?.data ?? (Array.isArray(out) ? out[0] : out);
+    const vec = Float32Array.from(outputData);
     l2(vec);
     return vec;
 }
@@ -117,12 +119,10 @@ async function embedImageFromBufferWithAugment(buffer, useAugment = true, useSma
 
     try {
         // Use smart augmentation if enabled
-        const variants = useSmartAugment 
-            ? await generateSmartAugmentations(buffer)
-            : await generateAugmentedImageData(buffer);
-            
+        const variants = useSmartAugment ? await generateSmartAugmentations(buffer) : await generateAugmentedImageData(buffer);
+
         const vecs = [];
-        
+
         if (variants.length > 0) {
             console.log(`🔄 Processing ${variants.length} augmented variants (smart: ${useSmartAugment})...`);
             for (const img of variants) {
@@ -134,7 +134,7 @@ async function embedImageFromBufferWithAugment(buffer, useAugment = true, useSma
                 }
             }
         }
-        
+
         // Fallback to original buffer if augment fails
         if (vecs.length === 0) {
             console.log("⚠️ Augmentation failed, using original image");
@@ -151,7 +151,7 @@ async function embedImageFromBufferWithAugment(buffer, useAugment = true, useSma
         const n = vecs.length;
         for (let i = 0; i < dim; i++) mean[i] /= n;
         l2(mean); // Re-normalize after averaging
-        
+
         console.log(`✅ Averaged ${n} augmented embeddings with enhanced processing`);
         return mean;
     } catch (err) {
@@ -166,27 +166,52 @@ async function embedImageFromBufferWithAugment(buffer, useAugment = true, useSma
 function getModelInfo() {
     return {
         ...modelInfo,
-        total_variants: 11, // Original + 10 enhanced augmentations
+        total_variants: 18, // Original + geometric (crop/flip/rotate) + photometric
         augmentation_types: [
             "original",
-            "clahe_contrast",
-            "unsharp_mask_deblur",
-            "bilateral_denoise", 
+            "geom_center_crop_90",
+            "geom_center_crop_70",
+            "geom_top_left_crop_80",
+            "geom_flip_horizontal",
+            "geom_rotate_+8",
+            "geom_rotate_-8",
+            "enhanced_clahe_contrast",
+            "strong_unsharp_deblur",
+            "mild_unsharp_deblur",
+            "advanced_nlm_denoising",
+            "edge_preserving_filter",
+            "bilateral_noise_reduction",
+            "wiener_deconvolution",
             "color_temp_cool",
             "color_temp_warm",
             "gamma_correction",
             "hsv_adjustment",
             "histogram_equalization",
             "brightness_darker",
-            "brightness_brighter"
+            "brightness_brighter",
         ],
         enhancement_features: [
-            "blur_recovery",
-            "color_temperature_invariance", 
-            "noise_reduction",
+            "multi_scale_blur_recovery",
+            "motion_blur_detection",
+            "advanced_noise_reduction",
+            "edge_preserving_smoothing",
+            "color_temperature_invariance",
             "contrast_enhancement",
-            "exposure_normalization"
-        ]
+            "exposure_normalization",
+            "laplacian_sharpness_detection",
+            "noise_variance_estimation",
+            "geometric_crops_rotations_flips",
+        ],
+        blur_handling: {
+            methods: ["unsharp_masking", "wiener_deconvolution", "edge_preserving"],
+            motion_blur_detection: true,
+            multi_scale_processing: true,
+        },
+        noise_handling: {
+            methods: ["nlm_denoising", "bilateral_filter", "edge_preserving"],
+            adaptive_parameters: true,
+            noise_estimation: true,
+        },
     };
 }
 
@@ -200,15 +225,15 @@ function getModelInfo() {
 async function processBatchEmbeddings(imageBatch, useAugment = true, useSmartAugment = true) {
     const results = [];
     const startTime = Date.now();
-    
+
     console.log(`🔄 Processing batch of ${imageBatch.length} images (smart augment: ${useSmartAugment})...`);
-    
+
     for (let i = 0; i < imageBatch.length; i++) {
         const { id, buffer, filename } = imageBatch[i];
         try {
             const embedding = await embedImageFromBufferWithAugment(buffer, useAugment, useSmartAugment);
             results.push({ id, embedding });
-            
+
             if ((i + 1) % 5 === 0) {
                 const elapsed = (Date.now() - startTime) / 1000;
                 const rate = (i + 1) / elapsed;
@@ -219,20 +244,20 @@ async function processBatchEmbeddings(imageBatch, useAugment = true, useSmartAug
             results.push({ id, error: error.message });
         }
     }
-    
+
     const totalTime = (Date.now() - startTime) / 1000;
     console.log(`✅ Enhanced batch completed in ${totalTime.toFixed(2)}s`);
-    
+
     return results;
 }
 
-module.exports = { 
-    getExtractor, 
-    embedImageFromBuffer, 
-    embedImageFromImageData, 
-    embedImageFromPath, 
-    getModelId, 
+module.exports = {
+    getExtractor,
+    embedImageFromBuffer,
+    embedImageFromImageData,
+    embedImageFromPath,
+    getModelId,
     embedImageFromBufferWithAugment,
     getModelInfo,
-    processBatchEmbeddings
+    processBatchEmbeddings,
 };

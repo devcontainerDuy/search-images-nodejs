@@ -4,7 +4,10 @@ const db = require("../config/database");
 const { md5, getDimensions, generateFakeTitle } = require("../utils/helper");
 const { insertImage, getImageById } = require("../models/images");
 const { upsertEmbedding } = require("../models/embeddings");
+// Import from the working CLIP service
 const { getModelId, embedImageFromBufferWithAugment } = require("../services/clip.service");
+// Fallback to simple service if main service fails
+const clipSimple = require("../services/clip.service");
 
 // List images with pagination
 async function index(req, res) {
@@ -48,8 +51,9 @@ async function create(req, res) {
         const { title = "", description = "", tags = "" } = req.body || {};
 
         const created = [];
-        const modelId = getModelId();
-        
+        let successfulEmbeddings = 0;
+        let failedEmbeddings = 0;
+
         for (const file of files) {
             const filePath = file.path;
             const buffer = await fs.readFile(filePath);
@@ -75,28 +79,56 @@ async function create(req, res) {
             try {
                 const imageId = await insertImage(meta);
                 console.log(`📸 Uploaded image ID ${imageId}: ${meta.filename}`);
-                
-                // Generate and save embedding
+
+                // Generate and save embedding with enhanced error handling
                 try {
                     console.log(`🤖 Generating embedding for ${meta.filename}...`);
-                    const embedding = await embedImageFromBufferWithAugment(buffer, true);
-                    await upsertEmbedding(imageId, modelId, Array.from(embedding));
+
+                    // Try main CLIP service first
+                    let embedding;
+                    let modelId;
+
+                    try {
+                        modelId = getModelId();
+                        embedding = await embedImageFromBufferWithAugment(buffer, true, true); // Use smart augmentation
+                    } catch (clipError) {
+                        console.warn(`⚠️  Main CLIP service failed for ${meta.filename}, trying fallback:`, clipError.message);
+                        // Fallback to simple service
+                        modelId = clipSimple.getModelId();
+                        embedding = await clipSimple.embedImageFromBufferWithAugment(buffer, true);
+                    }
+
+                    // Ensure embedding is in correct format
+                    const embeddingArray = embedding instanceof Float32Array ? Array.from(embedding) : Array.isArray(embedding) ? embedding : Array.from(embedding);
+
+                    console.log(`📊 Embedding info: ${embeddingArray.length}D vector, model: ${modelId}`);
+
+                    await upsertEmbedding(imageId, modelId, embeddingArray);
                     console.log(`✅ Embedding saved for image ID ${imageId}`);
+                    successfulEmbeddings++;
+
+                    created.push({
+                        id: imageId,
+                        ...meta,
+                        url: `/uploads/images/${meta.filename}`,
+                        embedding_generated: true,
+                        embedding_dimension: embeddingArray.length,
+                        model_used: modelId,
+                    });
                 } catch (embErr) {
                     console.error(`❌ Failed to generate embedding for ${meta.filename}:`, embErr.message);
+                    console.error("Stack:", embErr.stack);
+                    failedEmbeddings++;
+
                     // Continue with upload even if embedding fails
+                    created.push({
+                        id: imageId,
+                        ...meta,
+                        url: `/uploads/images/${meta.filename}`,
+                        embedding_generated: false,
+                        embedding_error: embErr.message,
+                    });
                 }
-                
-                // TODO: Add color histogram and hash processing here
-                // For now, just the basic upload + embedding
-                
-                created.push({ 
-                    id: imageId, 
-                    ...meta, 
-                    url: `/uploads/images/${meta.filename}`,
-                    embedding_generated: true
-                });
-                
             } catch (err) {
                 // Duplicate file_path or other constraint violations
                 if (err && err.code === "ER_DUP_ENTRY") {
@@ -107,15 +139,15 @@ async function create(req, res) {
             }
         }
 
-        const message = created.length > 0 
-            ? `Đã thêm thành công ${created.length} ảnh với embeddings` 
-            : "Không có ảnh mới được thêm";
-            
-        return res.json({ 
-            message, 
-            count: created.length, 
+        const message = created.length > 0 ? `Đã thêm thành công ${created.length} ảnh (${successfulEmbeddings} embeddings thành công, ${failedEmbeddings} thất bại)` : "Không có ảnh mới được thêm";
+
+        return res.json({
+            message,
+            count: created.length,
             items: created,
-            embeddings_generated: created.length
+            embeddings_generated: successfulEmbeddings,
+            embeddings_failed: failedEmbeddings,
+            total_files_processed: files.length,
         });
     } catch (err) {
         console.error("Upload failed:", err);
