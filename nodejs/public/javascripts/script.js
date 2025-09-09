@@ -23,9 +23,6 @@ const ele = {
         }
     })(),
 
-    // Tab switching - reset to gallery when switching to upload tab
-    tab: document.getElementById("upload-tab"),
-
     // Search elements
     searchImage: document.getElementById("searchImage"),
     previewImage: document.getElementById("previewImage"),
@@ -45,17 +42,6 @@ const ele = {
     gridView: document.getElementById("gridView"),
     listView: document.getElementById("listView"),
 };
-
-// Tab switching - reset to gallery when switching to upload tab
-ele.tab.addEventListener("shown.bs.tab", () => {
-    if (currentMode === "search") {
-        currentMode = "gallery";
-        loadPage(1);
-        ele.prevBtn.style.display = "inline-block";
-        ele.nextBtn.style.display = "inline-block";
-        ele.searchStats.style.display = "none";
-    }
-});
 
 // Utility functions
 function showLoading(text = "Đang xử lý...") {
