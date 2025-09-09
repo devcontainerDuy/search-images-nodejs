@@ -1,27 +1,28 @@
 const path = require("path");
 const fs = require("fs/promises");
+const crypto = require("crypto");
 const multer = require("multer");
-const { getModelId, embedImageFromBuffer, embedImageFromPath } = require("../services/clip.service");
+const { getModelId, embedImageFromBufferWithAugment } = require("../services/clip.service");
 const { getEmbeddingsWithImages, getMissingImageIdsForModel, upsertEmbedding } = require("../models/embeddings");
+const { cosine } = require("../utils/clip");
+const { LRUCache } = require("lru-cache");
+const { sha256 } = require("../utils/helper");
 
-let augmentationEnabled = true; // placeholder flag; augmentation not applied yet
+let augmentationEnabled = true; // runtime toggle, applied in embedding
 
 // In-memory cache of embeddings per model to avoid re-reading/parsing on every search
 const cache = new Map(); // key: modelId, val: { items: [{ image_id, filename, title, vec }], dim }
 
-function l2norm(vec) {
-    let sum = 0;
-    for (let i = 0; i < vec.length; i++) sum += vec[i] * vec[i];
-    const norm = Math.sqrt(sum) || 1;
-    for (let i = 0; i < vec.length; i++) vec[i] /= norm;
-    return vec;
-}
+// LRU cache for query image embeddings (mirror Python @lru_cache)
+const queryCache = new LRUCache({ max: 200, ttl: 5 * 60 * 1000 });
 
-function cosineSimilarity(a, b) {
-    // Inputs are L2-normalized; cosine similarity reduces to dot product
-    let dot = 0;
-    for (let i = 0; i < a.length; i++) dot += a[i] * b[i];
-    return dot;
+async function getQueryEmbedding(buffer, useAug, modelId) {
+    const key = `${modelId}:${useAug ? "aug" : "raw"}:${sha256(buffer)}`;
+    const cached = queryCache.get(key);
+    if (cached) return { vec: cached, cached: true };
+    const vec = await embedImageFromBufferWithAugment(buffer, useAug);
+    queryCache.set(key, vec);
+    return { vec, cached: false };
 }
 
 async function warmCache(modelId) {
@@ -59,26 +60,32 @@ async function searchByImage(req, res) {
 
         const min_similarity = Math.max(0, Math.min(1, parseFloat(req.body.min_similarity ?? "0.65")));
         const top_k = Math.max(1, Math.min(200, parseInt(req.body.top_k ?? "50", 10)));
+        const category = (req.body.category || "").toString().trim().toLowerCase();
         const use_augmentation = String(req.body.use_augmentation ?? "true").toLowerCase() === "true";
         augmentationEnabled = use_augmentation;
 
         const modelId = getModelId();
 
         const tFeat0 = Date.now();
-        const qvec = await embedImageFromBuffer(req.file.buffer); // already L2-normalized
+        const { vec: qvec } = await getQueryEmbedding(req.file.buffer, use_augmentation, modelId); // L2-normalized
         const feature_time = (Date.now() - tFeat0) / 1000;
 
-        const tLoad0 = Date.now();
         const { items } = await ensureCache(modelId);
-        const load_time = (Date.now() - tLoad0) / 1000;
 
         const tSim0 = Date.now();
         const scored = [];
         for (const it of items) {
             // Ensure same dimension
             if (it.vec && it.vec.length === qvec.length) {
-                const score = cosineSimilarity(qvec, it.vec);
+                const score = cosine(qvec, it.vec);
                 if (score >= min_similarity) {
+                    if (category) {
+                        const tags = (it.tags || "").toString().toLowerCase();
+                        const title = (it.title || "").toString().toLowerCase();
+                        const desc = (it.description || "").toString().toLowerCase();
+                        const match = tags.split(/[\s,;]+/).includes(category) || title.includes(category) || desc.includes(category);
+                        if (!match) continue;
+                    }
                     scored.push({
                         image: it.filename,
                         score,
@@ -88,9 +95,11 @@ async function searchByImage(req, res) {
                 }
             }
         }
+        const tSort0 = Date.now();
         scored.sort((a, b) => b.score - a.score);
         const results = scored.slice(0, top_k).map((r) => ({ ...r, score: Number(r.score.toFixed(6)) }));
-        const similarity_time = (Date.now() - tSim0) / 1000;
+        const similarity_time = (tSort0 - tSim0) / 1000;
+        const sorting_time = (Date.now() - tSort0) / 1000;
 
         const total_time = (Date.now() - t0) / 1000;
         return res.json({
@@ -99,8 +108,8 @@ async function searchByImage(req, res) {
             results,
             timing: {
                 feature_extraction: feature_time,
-                cache_load: load_time,
                 similarity_calculation: similarity_time,
+                sorting: sorting_time,
                 total: total_time,
             },
             use_augmentation: augmentationEnabled,
@@ -120,7 +129,9 @@ async function rebuildEmbeddings(req, res) {
         for (const row of missing) {
             const abs = path.join(__dirname, "..", row.file_path);
             try {
-                const vec = await embedImageFromPath(abs);
+                // Embed with same augmentation strategy as search for better robustness
+                const buf = await fs.readFile(abs);
+                const vec = await embedImageFromBufferWithAugment(buf, augmentationEnabled);
                 await upsertEmbedding(row.id, modelId, vec);
                 processed++;
             } catch (e) {
@@ -143,7 +154,9 @@ async function stats(req, res) {
         const entry = await ensureCache(modelId);
         return res.json({
             total_images: entry.items.length,
+            device: "wasm-cpu",
             model: modelId,
+            image_folder: "/uploads/images",
             augmentation_enabled: augmentationEnabled,
         });
     } catch (err) {

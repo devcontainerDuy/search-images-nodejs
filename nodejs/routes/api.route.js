@@ -52,9 +52,13 @@ router.post("/search", searchCtrl.uploadSearch, searchCtrl.searchByImage);
 
 // Rebuild embeddings for all images (missing for current model)
 router.get("/rebuild-embeddings", searchCtrl.rebuildEmbeddings);
+// Alias to mirror Python endpoint naming
+router.get("/rebuild", searchCtrl.rebuildEmbeddings);
 
 // Stats and augmentation toggle
 router.get("/stats", searchCtrl.stats);
 router.post("/toggle-augmentation", express.json(), searchCtrl.toggleAugmentation);
+// Alias to mirror Python underscore naming
+router.post("/toggle_augmentation", express.json(), searchCtrl.toggleAugmentation);
 
 module.exports = router;

@@ -3,6 +3,11 @@ function md5(buffer) {
     return crypto.createHash("md5").update(buffer).digest("hex");
 }
 
+function sha256(buffer) {
+    const crypto = require("crypto");
+    return crypto.createHash("sha256").update(buffer).digest("hex");
+}
+
 async function getDimensions(filePath) {
     // Prefer fast image-size probing without full decode
     try {
@@ -23,4 +28,4 @@ function generateFakeTitle(originalName) {
     return `${base || "Image"} ${stamp}`;
 }
 
-module.exports = { md5, getDimensions, generateFakeTitle };
+module.exports = { md5, sha256, getDimensions, generateFakeTitle };
