@@ -9,6 +9,10 @@ const apiRouter = require("./routes/api.route.js");
 
 const app = express();
 
+// Initialize AI system on startup (mirror Python behavior)
+const { initializeSystem } = require("./services/startup.service");
+initializeSystem().catch(console.error);
+
 // view engine setup
 app.set("views", path.join(__dirname, "views"));
 app.set("view engine", "ejs");

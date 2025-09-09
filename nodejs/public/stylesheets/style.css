@@ -1,8 +1,206 @@
 body {
   padding: 50px;
   font: 14px "Lucida Grande", Helvetica, Arial, sans-serif;
+  background-color: #f8f9fa;
 }
 
 a {
   color: #00B7FF;
+}
+
+/* Tab styling */
+.nav-tabs .nav-link {
+  border-radius: 8px 8px 0 0;
+  margin-right: 0.25rem;
+}
+
+.nav-tabs .nav-link.active {
+  background-color: #0d6efd;
+  color: white;
+  border-color: #0d6efd;
+}
+
+.nav-tabs .nav-link:hover {
+  border-color: #0d6efd;
+  color: #0d6efd;
+}
+
+/* Tab content */
+.tab-content {
+  background: white;
+  border: 1px solid #dee2e6;
+  border-top: none;
+  border-radius: 0 0 8px 8px;
+  padding: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+/* Card Styles */
+.card {
+  border: none;
+  border-radius: 12px;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+  transition: all 0.3s ease;
+  overflow: hidden;
+}
+
+.card:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 8px 30px rgba(0,0,0,0.15);
+}
+
+.card-img-top {
+  height: 200px;
+  object-fit: cover;
+  transition: transform 0.3s ease;
+}
+
+.card:hover .card-img-top {
+  transform: scale(1.05);
+}
+
+.card-body {
+  background: white;
+}
+
+/* Search Results Specific */
+.search-result {
+  position: relative;
+}
+
+.search-score {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: linear-gradient(45deg, #28a745, #20c997);
+  color: white;
+  padding: 4px 8px;
+  border-radius: 20px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+}
+
+/* Form styling */
+.form-range {
+  accent-color: #0d6efd;
+}
+
+.form-check-input:checked {
+  background-color: #0d6efd;
+  border-color: #0d6efd;
+}
+
+/* Button enhancements */
+.btn {
+  border-radius: 8px;
+  font-weight: 500;
+}
+
+.btn-primary {
+  background: linear-gradient(45deg, #0d6efd, #6610f2);
+  border: none;
+}
+
+.btn-success {
+  background: linear-gradient(45deg, #28a745, #20c997);
+  border: none;
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+}
+
+/* Alert styling */
+.alert-info {
+  background: linear-gradient(45deg, #17a2b8, #20c997);
+  border: none;
+  color: white;
+  border-radius: 10px;
+}
+
+/* Loading spinner */
+.spinner-border {
+  width: 3rem;
+  height: 3rem;
+}
+
+/* Animation for gallery loading */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.gallery-item {
+  animation: fadeInUp 0.5s ease forwards;
+}
+
+/* List view styles */
+.list-view .card {
+  flex-direction: row;
+  max-height: 120px;
+}
+
+.list-view .card-img-top {
+  width: 120px;
+  height: 120px;
+  object-fit: cover;
+}
+
+.list-view .card-body {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* Image preview styling */
+#uploadPreview, #previewImage {
+  border-radius: 8px;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+}
+
+/* System status card */
+#systemStatus .card {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+}
+
+/* Toast positioning */
+.toast-container {
+  z-index: 1060;
+}
+
+/* Responsive improvements */
+@media (max-width: 768px) {
+  body {
+    padding: 20px;
+  }
+  
+  .card-img-top {
+    height: 150px;
+  }
+  
+  .tab-content {
+    padding: 1rem;
+  }
+}
+
+/* Tab content specific styling */
+.tab-pane {
+  min-height: 300px;
+}
+
+/* View mode toggle */
+.btn-group .btn-check:checked + .btn {
+  background-color: #0d6efd;
+  border-color: #0d6efd;
+  color: white;
 }

@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Image Search Demo</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+    <div class="container my-5">
+        <div class="row justify-content-center">
+            <div class="col-md-8">
+                <div class="card shadow-lg">
+                    <div class="card-header bg-primary text-white text-center">
+                        <h3><i class="bi bi-magic"></i> AI Image Search Demo</h3>
+                        <p class="mb-0">Upload an image to find similar images using CLIP AI</p>
+                    </div>
+                    <div class="card-body">
+                        <form id="demoSearchForm" class="mb-4">
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label class="form-label">
+                                            <i class="bi bi-camera"></i> Select Image:
+                                        </label>
+                                        <input type="file" class="form-control" name="image" accept="image/*" required>
+                                    </div>
+                                    
+                                    <div class="mb-3">
+                                        <label class="form-label">
+                                            Similarity Threshold: <span id="thresholdValue">0.65</span>
+                                        </label>
+                                        <input type="range" class="form-range" name="min_similarity" 
+                                               min="0.1" max="1.0" step="0.05" value="0.65">
+                                    </div>
+                                    
+                                    <div class="mb-3">
+                                        <label class="form-label">Max Results:</label>
+                                        <select class="form-select" name="top_k">
+                                            <option value="10">10 results</option>
+                                            <option value="20" selected>20 results</option>
+                                            <option value="50">50 results</option>
+                                        </select>
+                                    </div>
+                                    
+                                    <div class="form-check mb-3">
+                                        <input class="form-check-input" type="checkbox" name="use_augmentation" checked>
+                                        <label class="form-check-label">
+                                            <i class="bi bi-magic"></i> Use AI Augmentation
+                                        </label>
+                                    </div>
+                                    
+                                    <button type="submit" class="btn btn-primary w-100">
+                                        <i class="bi bi-search"></i> Search Similar Images
+                                    </button>
+                                </div>
+                                
+                                <div class="col-md-6">
+                                    <div id="imagePreview" style="display: none;">
+                                        <h6>Query Image:</h6>
+                                        <img id="previewImg" class="img-fluid rounded border" style="max-height: 250px;">
+                                    </div>
+                                </div>
+                            </div>
+                        </form>
+                        
+                        <!-- Search Results -->
+                        <div id="searchResults" style="display: none;">
+                            <hr>
+                            <div id="resultsHeader" class="d-flex justify-content-between align-items-center mb-3">
+                                <h5><i class="bi bi-search"></i> Search Results</h5>
+                                <small id="searchInfo" class="text-muted"></small>
+                            </div>
+                            <div id="resultsGrid" class="row g-3"></div>
+                        </div>
+                        
+                        <!-- Loading -->
+                        <div id="loading" class="text-center py-4" style="display: none;">
+                            <div class="spinner-border text-primary" role="status"></div>
+                            <div class="mt-2">Processing with AI...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const form = document.getElementById('demoSearchForm');
+            const imageInput = form.querySelector('input[type="file"]');
+            const similaritySlider = form.querySelector('input[name="min_similarity"]');
+            const thresholdValue = document.getElementById('thresholdValue');
+            const imagePreview = document.getElementById('imagePreview');
+            const previewImg = document.getElementById('previewImg');
+            const loading = document.getElementById('loading');
+            const searchResults = document.getElementById('searchResults');
+            const searchInfo = document.getElementById('searchInfo');
+            const resultsGrid = document.getElementById('resultsGrid');
+
+            // Update similarity value display
+            similaritySlider.addEventListener('input', function() {
+                thresholdValue.textContent = this.value;
+            });
+
+            // Preview uploaded image
+            imageInput.addEventListener('change', function(e) {
+                const file = e.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = function(e) {
+                        previewImg.src = e.target.result;
+                        imagePreview.style.display = 'block';
+                    };
+                    reader.readAsDataURL(file);
+                } else {
+                    imagePreview.style.display = 'none';
+                }
+            });
+
+            // Handle form submission
+            form.addEventListener('submit', async function(e) {
+                e.preventDefault();
+
+                const formData = new FormData(form);
+                
+                // Show loading
+                loading.style.display = 'block';
+                searchResults.style.display = 'none';
+
+                try {
+                    const response = await fetch('/api/search', {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    const data = await response.json();
+
+                    if (response.ok) {
+                        displayResults(data);
+                    } else {
+                        alert('Search failed: ' + (data.error || 'Unknown error'));
+                    }
+                } catch (error) {
+                    alert('Network error: ' + error.message);
+                } finally {
+                    loading.style.display = 'none';
+                }
+            });
+
+            function displayResults(data) {
+                // Update search info
+                searchInfo.innerHTML = `
+                    <div><strong>${data.total_results}</strong> results in <strong>${data.timing.total.toFixed(3)}s</strong></div>
+                    <div>Model: ${data.model} | Augmentation: ${data.use_augmentation ? 'ON' : 'OFF'}</div>
+                `;
+
+                // Clear previous results
+                resultsGrid.innerHTML = '';
+
+                // Display results
+                if (data.results && data.results.length > 0) {
+                    data.results.forEach((result, index) => {
+                        const resultCard = document.createElement('div');
+                        resultCard.className = 'col-md-4 col-lg-3';
+                        
+                        const scorePercent = (result.score * 100).toFixed(1);
+                        const scoreColor = result.score > 0.8 ? 'success' : result.score > 0.6 ? 'warning' : 'secondary';
+                        
+                        resultCard.innerHTML = `
+                            <div class="card h-100">
+                                <div class="position-relative">
+                                    <img src="${result.image_url}" class="card-img-top" alt="${result.image}" 
+                                         style="height: 150px; object-fit: cover;">
+                                    <span class="position-absolute top-0 end-0 badge bg-${scoreColor} m-2">
+                                        ${scorePercent}%
+                                    </span>
+                                </div>
+                                <div class="card-body p-2">
+                                    <h6 class="card-title small">${result.metadata?.title || result.image}</h6>
+                                    ${result.metadata?.description ? `<p class="card-text small text-muted">${result.metadata.description}</p>` : ''}
+                                    ${result.metadata?.tags ? `<div class="small"><span class="badge bg-light text-dark">${result.metadata.tags}</span></div>` : ''}
+                                </div>
+                            </div>
+                        `;
+
+                        resultsGrid.appendChild(resultCard);
+                    });
+                } else {
+                    resultsGrid.innerHTML = `
+                        <div class="col-12 text-center py-4">
+                            <i class="bi bi-search display-1 text-muted"></i>
+                            <h5 class="text-muted mt-3">No similar images found</h5>
+                            <p class="text-muted">Try adjusting the similarity threshold or using a different image</p>
+                        </div>
+                    `;
+                }
+
+                searchResults.style.display = 'block';
+            }
+        });
+    </script>
+</body>
+</html>

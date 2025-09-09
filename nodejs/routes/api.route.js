@@ -61,4 +61,8 @@ router.post("/toggle-augmentation", express.json(), searchCtrl.toggleAugmentatio
 // Alias to mirror Python underscore naming
 router.post("/toggle_augmentation", express.json(), searchCtrl.toggleAugmentation);
 
+// Additional utility endpoints
+router.delete("/clear-caches", searchCtrl.clearCaches);
+router.get("/health", searchCtrl.healthCheck);
+
 module.exports = router;

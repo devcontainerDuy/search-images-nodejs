@@ -8,17 +8,45 @@ const { generateAugmentedImageData } = require("../utils/augment");
 env.localModelPath = path.resolve(__dirname, "./cache");
 env.allowLocalModels = true;
 
-// Default CLIP model (similar to ViT-B/32 in Python fallback)
-const DEFAULT_MODEL_ID = process.env.CLIP_MODEL_ID || "Xenova/clip-vit-base-patch32";
+// Model selection based on performance (mirroring Python logic)
+const getOptimalModel = () => {
+    // Try to use larger model if GPU/high-end CPU is available
+    // For now, we'll stick with base model for JavaScript compatibility
+    const models = [
+        "Xenova/clip-vit-base-patch32",
+        "Xenova/clip-vit-base-patch16"
+    ];
+    return process.env.CLIP_MODEL_ID || models[0];
+};
+
+const DEFAULT_MODEL_ID = getOptimalModel();
 
 let extractorPromise = null;
+let modelInfo = {
+    name: DEFAULT_MODEL_ID,
+    device: "wasm-cpu",
+    loaded: false
+};
 
 /**
  * Singleton pipeline để tránh khởi tạo lại nhiều lần.
  */
 async function getExtractor() {
     if (!extractorPromise) {
-        extractorPromise = pipeline("image-feature-extraction", DEFAULT_MODEL_ID);
+        console.log(`🔄 Loading CLIP model: ${DEFAULT_MODEL_ID}...`);
+        const startTime = Date.now();
+        extractorPromise = pipeline("image-feature-extraction", DEFAULT_MODEL_ID)
+            .then(pipe => {
+                const loadTime = (Date.now() - startTime) / 1000;
+                console.log(`✅ CLIP model loaded in ${loadTime.toFixed(2)}s`);
+                modelInfo.loaded = true;
+                return pipe;
+            })
+            .catch(err => {
+                console.error(`❌ Failed to load CLIP model:`, err);
+                extractorPromise = null;
+                throw err;
+            });
     }
     return extractorPromise;
 }
@@ -85,31 +113,108 @@ function getModelId() {
 async function embedImageFromBufferWithAugment(buffer, useAugment = true) {
     if (!useAugment) return embedImageFromBuffer(buffer);
 
-    // Generate ImageData variants via OpenCV pipeline
-    const variants = await generateAugmentedImageData(buffer).catch(() => []);
-    const vecs = [];
-    if (variants.length) {
-        for (const img of variants) {
-            try {
-                const v = await embedImageFromImageData(img);
-                vecs.push(v);
-            } catch (_) {}
+    try {
+        // Generate ImageData variants via OpenCV pipeline
+        const variants = await generateAugmentedImageData(buffer);
+        const vecs = [];
+        
+        if (variants.length > 0) {
+            console.log(`🔄 Processing ${variants.length} augmented variants...`);
+            for (const img of variants) {
+                try {
+                    const v = await embedImageFromImageData(img);
+                    vecs.push(v);
+                } catch (e) {
+                    console.warn("Skip augmented variant:", e.message);
+                }
+            }
         }
-    }
-    // Fallback to original buffer if augment fails
-    if (vecs.length === 0) return embedImageFromBuffer(buffer);
+        
+        // Fallback to original buffer if augment fails
+        if (vecs.length === 0) {
+            console.log("⚠️ Augmentation failed, using original image");
+            return embedImageFromBuffer(buffer);
+        }
 
-    // Mean pool
-    const dim = vecs[0].length;
-    const mean = new Float32Array(dim);
-    for (const v of vecs) {
-        if (v.length !== dim) continue;
-        for (let i = 0; i < dim; i++) mean[i] += v[i];
+        // Mean pool the vectors (like Python version)
+        const dim = vecs[0].length;
+        const mean = new Float32Array(dim);
+        for (const v of vecs) {
+            if (v.length !== dim) continue;
+            for (let i = 0; i < dim; i++) mean[i] += v[i];
+        }
+        const n = vecs.length;
+        for (let i = 0; i < dim; i++) mean[i] /= n;
+        l2(mean); // Re-normalize after averaging
+        
+        console.log(`✅ Averaged ${n} augmented embeddings`);
+        return mean;
+    } catch (err) {
+        console.warn("Augmentation failed, fallback to original:", err.message);
+        return embedImageFromBuffer(buffer);
     }
-    const n = vecs.length;
-    for (let i = 0; i < dim; i++) mean[i] /= n;
-    l2(mean);
-    return mean;
 }
 
-module.exports = { getExtractor, embedImageFromBuffer, embedImageFromImageData, embedImageFromPath, getModelId, embedImageFromBufferWithAugment };
+/**
+ * Get comprehensive model information (mirrors Python /stats endpoint)
+ */
+function getModelInfo() {
+    return {
+        ...modelInfo,
+        total_variants: 6, // Original + 5 augmentations
+        augmentation_types: [
+            "original",
+            "clahe_contrast",
+            "histogram_equalization", 
+            "gaussian_blur",
+            "brightness_darker",
+            "brightness_brighter"
+        ]
+    };
+}
+
+/**
+ * Process multiple images in batch (for rebuild operations)
+ * @param {Array<{id: number, buffer: Buffer, filename: string}>} imageBatch
+ * @param {boolean} useAugment
+ * @returns {Promise<Array<{id: number, embedding: Float32Array, error?: string}>>}
+ */
+async function processBatchEmbeddings(imageBatch, useAugment = true) {
+    const results = [];
+    const startTime = Date.now();
+    
+    console.log(`🔄 Processing batch of ${imageBatch.length} images...`);
+    
+    for (let i = 0; i < imageBatch.length; i++) {
+        const { id, buffer, filename } = imageBatch[i];
+        try {
+            const embedding = await embedImageFromBufferWithAugment(buffer, useAugment);
+            results.push({ id, embedding });
+            
+            if ((i + 1) % 10 === 0) {
+                const elapsed = (Date.now() - startTime) / 1000;
+                const rate = (i + 1) / elapsed;
+                console.log(`Processed ${i + 1}/${imageBatch.length} images (${rate.toFixed(2)} img/sec)`);
+            }
+        } catch (error) {
+            console.warn(`❌ Failed to process ${filename}:`, error.message);
+            results.push({ id, error: error.message });
+        }
+    }
+    
+    const totalTime = (Date.now() - startTime) / 1000;
+    console.log(`✅ Batch completed in ${totalTime.toFixed(2)}s`);
+    
+    return results;
+}
+
+module.exports = { 
+    getExtractor, 
+    embedImageFromBuffer, 
+    embedImageFromImageData, 
+    embedImageFromPath, 
+    getModelId, 
+    embedImageFromBufferWithAugment,
+    getModelInfo,
+    processBatchEmbeddings
+};
