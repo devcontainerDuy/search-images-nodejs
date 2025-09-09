@@ -7,7 +7,7 @@ const { analyzeImageQuality } = require("../utils/smart-augment");
 const { getEmbeddingsWithImages, getMissingImageIdsForModel, upsertEmbedding } = require("../models/embeddings");
 const { cosine } = require("../utils/clip");
 const { warmModelCache, ensureModelCache, deleteModelCache, getQueryEmbedding, clearQueryCache, clearAllCaches, getCacheStats } = require("../services/cache.service");
-const { getAugmentationEnabled, setAugmentationEnabled } = require("../services/settings.service");
+const { getAugmentationEnabled, setAugmentationEnabled, getRobustRecoveryMode, setRobustRecoveryMode } = require("../services/settings.service");
 
 // Global augmentation lives in settings.service
 let globalStats = {
@@ -299,6 +299,7 @@ async function stats(req, res) {
             model: modelId,
             image_folder: "/uploads/images",
             augmentation_enabled: getAugmentationEnabled(),
+            robust_recovery_mode: getRobustRecoveryMode(),
 
             // Enhanced stats (Node.js specific)
             model_info: modelInfo,
@@ -356,6 +357,21 @@ async function toggleAugmentation(req, res) {
         });
     } catch (err) {
         console.error("❌ toggleAugmentation failed:", err);
+        return res.status(400).json({ error: "Invalid request", detail: String(err.message || err) });
+    }
+}
+
+async function toggleRobust(req, res) {
+    try {
+        const enabled = !!req.body?.enabled;
+        const previous = getRobustRecoveryMode();
+        setRobustRecoveryMode(enabled);
+        console.log(`🔧 Robust recovery mode ${enabled ? 'enabled' : 'disabled'} (was ${previous})`);
+        // Changing robustness does not require cache clear, but we could clear query cache to avoid surprises
+        // clearQueryCache();
+        return res.json({ status: 'success', robust_recovery_mode: getRobustRecoveryMode(), previous_state: previous });
+    } catch (err) {
+        console.error("❌ toggleRobust failed:", err);
         return res.status(400).json({ error: "Invalid request", detail: String(err.message || err) });
     }
 }
@@ -419,6 +435,7 @@ module.exports = {
     rebuildEmbeddings,
     stats,
     toggleAugmentation,
+    toggleRobust,
     clearCaches,
     healthCheck,
 };

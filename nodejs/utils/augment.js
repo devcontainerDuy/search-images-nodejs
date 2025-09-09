@@ -97,7 +97,8 @@ function imageToImageData(img) {
     return { data: out, width, height };
 }
 
-async function generateGeometricVariants(buffer) {
+async function generateGeometricVariants(buffer, opts = {}) {
+    const robust = !!opts.robust;
     const img = await I.decode(buffer);
     const variants = [];
     try {
@@ -132,6 +133,23 @@ async function generateGeometricVariants(buffer) {
         try {
             variants.push(imageToImageData(img.rotate(-8)));
         } catch (_) {}
+
+        if (robust) {
+            // Additional crops for occlusions/partial contents
+            const w3 = Math.max(1, Math.floor(width * 0.8));
+            const h3 = Math.max(1, Math.floor(height * 0.8));
+            // Bottom-right crop 80%
+            variants.push(imageToImageData(img.crop({ x: width - w3, y: height - h3, width: w3, height: h3 })));
+            // Center crop 50%
+            const w4 = Math.max(1, Math.floor(width * 0.5));
+            const h4 = Math.max(1, Math.floor(height * 0.5));
+            const x4 = Math.floor((width - w4) / 2);
+            const y4 = Math.floor((height - h4) / 2);
+            variants.push(imageToImageData(img.crop({ x: x4, y: y4, width: w4, height: h4 })));
+            // Extra small rotations
+            try { variants.push(imageToImageData(img.rotate(12))); } catch(_) {}
+            try { variants.push(imageToImageData(img.rotate(-12))); } catch(_) {}
+        }
     } catch (e) {
         console.warn('Geometric variants generation failed:', e.message);
     }
@@ -441,16 +459,17 @@ const DEBUG_AUGMENT = ["1", "true", "yes"].includes(String(process.env.AUGMENT_L
 const alog = (...args) => { if (DEBUG_AUGMENT) console.log(...args); };
 
 // Enhanced augmentation pipeline focused on blur and noise recovery
-// opts: { maxVariants?: number }
+// opts: { maxVariants?: number, robust?: boolean }
 async function generateAugmentedImageData(buffer, opts = {}) {
-    const maxVariants = Math.max(1, Math.min(18, parseInt(opts.maxVariants || 18, 10)));
+    const maxVariants = Math.max(1, Math.min(24, parseInt(opts.maxVariants || 18, 10)));
+    const robust = !!opts.robust;
     const cv = await getCV();
     const imageData = await decodeToImageData(buffer);
 
     // Prepare list with original and geometric variants first (handle crops/rotations)
     const variants = [imageData];
     try {
-        const geom = await generateGeometricVariants(buffer);
+        const geom = await generateGeometricVariants(buffer, { robust });
         for (const v of geom) {
             if (variants.length >= maxVariants) break;
             variants.push(v);
@@ -569,6 +588,24 @@ async function generateAugmentedImageData(buffer, opts = {}) {
             const brightBGR = applyBrightness(cv, baseBGR, 1.2, 12);
             variants.push(toImageDataFromBGR(cv, brightBGR));
             brightBGR.delete();
+        }
+
+        // 16. Optional upscale + sharpen (approximate SR) for low-res/motion blur
+        if (robust && variants.length < maxVariants) {
+            const up = new cv.Mat();
+            cv.resize(baseBGR, up, new cv.Size(0, 0), 1.3, 1.3, cv.INTER_CUBIC);
+            const upSharp = applyUnsharpMask(cv, up, 1.6, 0.9);
+            variants.push(toImageDataFromBGR(cv, upSharp));
+            upSharp.delete();
+            up.delete();
+        }
+
+        // 17. Median filter to reduce blocky artifacts
+        if (robust && variants.length < maxVariants) {
+            const med = new cv.Mat();
+            cv.medianBlur(baseBGR, med, 3);
+            variants.push(toImageDataFromBGR(cv, med));
+            med.delete();
         }
     } catch (error) {
         console.warn("Enhanced augmentation error:", error.message);

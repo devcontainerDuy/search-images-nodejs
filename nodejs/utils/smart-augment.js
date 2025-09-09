@@ -1,5 +1,6 @@
 // Intelligent augmentation selection based on image characteristics
 const { generateAugmentedImageData } = require("../utils/augment");
+const { getRobustRecoveryMode } = require("../services/settings.service");
 const { decode } = require("image-js");
 
 // Debug logging control (disabled by default for performance)
@@ -256,10 +257,12 @@ async function generateSmartAugmentations(buffer) {
     // Decide variant budget based on severity to speed up
     const severe = analysis.isBlurry || analysis.isNoisy;
     const moderate = analysis.isLowContrast || analysis.isDark || analysis.isBright;
-    const maxVariants = severe ? 10 : moderate ? 6 : 3;
-    dlog(`🚀 Applying augmentation with maxVariants=${maxVariants}`);
+    const robust = getRobustRecoveryMode();
+    // Allocate more variants if robust mode is on
+    const maxVariants = severe ? (robust ? 14 : 10) : moderate ? (robust ? 10 : 6) : (robust ? 5 : 3);
+    dlog(`🚀 Applying augmentation with maxVariants=${maxVariants} (robust=${robust})`);
 
-    return generateAugmentedImageData(buffer, { maxVariants });
+    return generateAugmentedImageData(buffer, { maxVariants, robust });
 }
 
 /**

@@ -1,5 +1,6 @@
 // Centralized runtime settings (singleton)
 let augmentationEnabled = true;
+let robustRecoveryMode = false;
 
 function getAugmentationEnabled() {
   return augmentationEnabled;
@@ -13,5 +14,6 @@ function setAugmentationEnabled(enabled) {
 module.exports = {
   getAugmentationEnabled,
   setAugmentationEnabled,
+  getRobustRecoveryMode: () => robustRecoveryMode,
+  setRobustRecoveryMode: (enabled) => (robustRecoveryMode = !!enabled),
 };
-

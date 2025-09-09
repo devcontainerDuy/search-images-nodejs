@@ -38,6 +38,7 @@ const ele = {
     rebuildBtn: document.getElementById("rebuildBtn"),
     clearCacheBtn: document.getElementById("clearCacheBtn"),
     globalAugmentation: document.getElementById("globalAugmentation"),
+    robustRecovery: document.getElementById("robustRecovery"),
     systemStatus: document.getElementById("systemStatus"),
 
     // View mode
@@ -247,12 +248,14 @@ function updateSearchStats(data) {
             <div><strong>⚡ Tìm kiếm:</strong> ${data.performance_stats.total_searches}</div>
             <div><strong>💾 Cache hit:</strong> ${data.cache_stats.cache_hit_rate}</div>
             <div><strong>🔧 Augmentation:</strong> ${data.augmentation_enabled ? "Bật" : "Tắt"}</div>
+            <div><strong>🛠️ Phục hồi mạnh:</strong> ${data.robust_recovery_mode ? "Bật" : "Tắt"}</div>
         `;
 
         ele.systemStatus.innerHTML = statusHTML;
 
         // Update global augmentation checkbox
         ele.globalAugmentation.checked = data.augmentation_enabled;
+        if (ele.robustRecovery) ele.robustRecovery.checked = !!data.robust_recovery_mode;
     } catch (error) {
         console.error("Load stats error:", error);
         ele.systemStatus.innerHTML = '<div class="text-danger">Lỗi khi tải thống kê</div>';
@@ -443,6 +446,26 @@ document.addEventListener("DOMContentLoaded", () => {
     ele.globalAugmentation.onchange = (e) => {
         toggleGlobalAugmentation(e.target.checked);
     };
+
+    if (ele.robustRecovery) {
+        ele.robustRecovery.onchange = async (e) => {
+            try {
+                const res = await fetch("/api/toggle-robust", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ enabled: e.target.checked }),
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    showToast(`Chế độ phục hồi mạnh đã ${data.robust_recovery_mode ? 'bật' : 'tắt'}`);
+                } else {
+                    showToast(data.error || "Lỗi khi thay đổi cài đặt", "error");
+                }
+            } catch (error) {
+                showToast("Lỗi kết nối", "error");
+            }
+        };
+    }
 
     // View mode toggle
     ele.gridView.onchange = () => {
