@@ -1,5 +1,6 @@
 // Intelligent augmentation selection based on image characteristics
 const { generateAugmentedImageData } = require("../utils/augment");
+const imageType = require("image-type");
 const { getRobustRecoveryMode } = require("../services/settings.service");
 const { decode } = require("image-js");
 
@@ -17,10 +18,18 @@ async function analyzeImageQuality(buffer) {
         // Load image from buffer using image-js decode
         let img;
         try {
+            const type = imageType(buffer);
+            if (type && type.mime === 'image/webp') {
+                // Skip deep analysis for webp in this build
+                return getBasicAnalysis();
+            }
             img = await decode(buffer);
         } catch (loadError) {
-            // Keep warning to surface real issues, but avoid chatty logs
-            console.warn("image-js decode failed:", loadError.message);
+            // Keep warning to surface real issues, but avoid chatty logs; silence webp
+            const type = imageType(buffer);
+            if (!(type && type.mime === 'image/webp')) {
+                console.warn("image-js decode failed:", loadError.message);
+            }
             // Return basic analysis without detailed processing
             return getBasicAnalysis();
         }

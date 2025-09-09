@@ -2,7 +2,7 @@ const { pipeline, env, RawImage } = require("@xenova/transformers");
 const fs = require("fs");
 const path = require("path");
 const { l2 } = require("../utils/clip");
-const { generateAugmentedImageData } = require("../utils/augment");
+const { generateAugmentedImageData, generateGridTiles } = require("../utils/augment");
 const { generateSmartAugmentations, analyzeImageQuality } = require("../utils/smart-augment");
 
 // Configure environment if needed (e.g., local model cache)
@@ -273,3 +273,23 @@ module.exports = {
     getModelInfo,
     processBatchEmbeddings,
 };
+
+/**
+ * Embed grid tiles from a buffer and return an array of vectors.
+ * @param {Buffer} buffer
+ * @param {number} grid - number of tiles per side (e.g., 3, 5)
+ * @returns {Promise<Float32Array[]>}
+ */
+async function embedImageGridTiles(buffer, grid = 3, overlap = 0) {
+    const tiles = await generateGridTiles(buffer, { grid, maxTiles: grid * grid * (overlap > 0 ? 2 : 1), overlap });
+    const out = [];
+    for (const t of tiles) {
+        try {
+            const v = await embedImageFromImageData(t);
+            out.push({ vec: v, rect: t.rect || { x: 0, y: 0, w: t.width, h: t.height } });
+        } catch (_) {}
+    }
+    return out;
+}
+
+module.exports.embedImageGridTiles = embedImageGridTiles;

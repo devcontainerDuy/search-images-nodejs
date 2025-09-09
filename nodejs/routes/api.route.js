@@ -56,6 +56,9 @@ router.get("/rebuild-embeddings", searchCtrl.rebuildEmbeddings);
 // Alias to mirror Python endpoint naming
 router.get("/rebuild", searchCtrl.rebuildEmbeddings);
 
+// Build/refresh region (tile) embeddings index
+router.get("/rebuild-regions", searchCtrl.rebuildRegionEmbeddings);
+
 // Stats and augmentation toggle
 router.get("/stats", searchCtrl.stats);
 router.post("/toggle-augmentation", express.json(), searchCtrl.toggleAugmentation);

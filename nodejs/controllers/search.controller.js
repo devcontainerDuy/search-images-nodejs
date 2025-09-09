@@ -1,12 +1,11 @@
 const path = require("path");
 const fs = require("fs/promises");
-const crypto = require("crypto");
 const multer = require("multer");
-const { getModelId, embedImageFromBufferWithAugment, getModelInfo, processBatchEmbeddings } = require("../services/clip.service");
+const { getModelId, embedImageFromBufferWithAugment, getModelInfo, processBatchEmbeddings, embedImageGridTiles } = require("../services/clip.service");
 const { analyzeImageQuality } = require("../utils/smart-augment");
 const { getEmbeddingsWithImages, getMissingImageIdsForModel, upsertEmbedding } = require("../models/embeddings");
 const { cosine } = require("../utils/clip");
-const { warmModelCache, ensureModelCache, deleteModelCache, getQueryEmbedding, clearQueryCache, clearAllCaches, getCacheStats } = require("../services/cache.service");
+const { warmModelCache, ensureModelCache, deleteModelCache, getQueryEmbedding, clearQueryCache, clearAllCaches, getCacheStats, ensureRegionCache } = require("../services/cache.service");
 const { getAugmentationEnabled, setAugmentationEnabled, getRobustRecoveryMode, setRobustRecoveryMode } = require("../services/settings.service");
 
 // Global augmentation lives in settings.service
@@ -122,6 +121,8 @@ async function searchByImage(req, res) {
                         description: it.description,
                         tags: it.tags,
                         image_id: it.image_id,
+                        width: it.width,
+                        height: it.height,
                     },
                 });
             }
@@ -139,14 +140,51 @@ async function searchByImage(req, res) {
             const tR0 = Date.now();
             const n = Math.min(rerank_k, results.length);
             try {
-                const fs = require('fs/promises');
                 const updated = await Promise.all(results.slice(0, n).map(async (r) => {
                     try {
                         const abs = path.join(__dirname, '..', 'public', 'uploads', 'images', r.image);
                         const buf = await fs.readFile(abs);
-                        const vec = await embedImageFromBufferWithAugment(buf, useAugmentation, true);
-                        const s = cosine(qvec, vec);
-                        return { ...r, score_rerank: Number(s.toFixed(6)) };
+                        // Robust mode: try grid tiles max similarity to handle tiny crops/occlusions
+                        let best = -1;
+                        if (getRobustRecoveryMode()) {
+                            // Prefer precomputed region vectors if available
+                            try {
+                                const regionEntry = await ensureRegionCache(modelId);
+                                const regions = regionEntry?.items?.filter(it => it.image_id === r.metadata.image_id) || [];
+                                if (regions.length) {
+                                    for (const rr of regions) {
+                                        const s = cosine(qvec, rr.vec);
+                                        if (s > best) { best = s; bestRect = rr.rect; }
+                                    }
+                                } else {
+                                    // Fallback to on-the-fly tile embeddings with overlap
+                                    const grid = Math.max(2, parseInt(process.env.ROBUST_GRID || '7', 10));
+                                    const overlap = Math.max(0, Math.min(0.9, parseFloat(process.env.ROBUST_OVERLAP || '0.5')));
+                                    const tiles = await embedImageGridTiles(buf, grid, overlap);
+                                    for (const t of tiles) {
+                                        const s = cosine(qvec, t.vec);
+                                        if (s > best) { best = s; bestRect = t.rect; }
+                                    }
+                                }
+                            } catch (_) {}
+                        }
+                        // Fallback or complement: full-image with (optional) augment
+                        if (best < 0) {
+                            const vec = await embedImageFromBufferWithAugment(buf, useAugmentation, true);
+                            best = cosine(qvec, vec);
+                        }
+                        const out = { ...r, score_rerank: Number(best.toFixed(6)) };
+                        if (bestRect && r.metadata?.width && r.metadata?.height) {
+                            out.region_match = {
+                                x: bestRect.x,
+                                y: bestRect.y,
+                                w: bestRect.w,
+                                h: bestRect.h,
+                                w_img: r.metadata.width,
+                                h_img: r.metadata.height,
+                            };
+                        }
+                        return out;
                     } catch (_) {
                         return r;
                     }
@@ -281,10 +319,73 @@ async function rebuildEmbeddings(req, res) {
     }
 }
 
+// Build region (tile) embeddings for all images for current model
+async function rebuildRegionEmbeddings(req, res) {
+    const startTime = Date.now();
+    try {
+        console.log("🔄 Starting region embeddings rebuild...");
+        const modelId = getModelId();
+        // Ensure base embeddings exist to get file list with paths
+        const { getEmbeddingsWithImages } = require("../models/embeddings");
+        const { ensureRegionTable, upsertRegionEmbedding, deleteRegionsForModel } = require("../models/region_embeddings");
+        await ensureRegionTable();
+
+        const rows = await getEmbeddingsWithImages(modelId);
+        if (!Array.isArray(rows) || rows.length === 0) {
+            return res.json({ status: 'success', processed: 0, message: 'No base embeddings found for current model' });
+        }
+
+        // Optional: clear existing regions for model to avoid duplicates
+        await deleteRegionsForModel(modelId);
+
+        const batchSize = 10;
+        let processed = 0;
+        let errors = 0;
+        const grid = Math.max(2, parseInt(process.env.ROBUST_GRID || '7', 10));
+        const overlap = Math.max(0, Math.min(0.9, parseFloat(process.env.ROBUST_OVERLAP || '0.5')));
+        const { embedImageFromImageData } = require("../services/clip.service");
+        const { generateGridTiles } = require("../utils/augment");
+        const fs = require('fs/promises');
+
+        for (let i = 0; i < rows.length; i += batchSize) {
+            const batch = rows.slice(i, i + batchSize);
+            console.log(`Processing regions batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(rows.length / batchSize)}`);
+            for (const row of batch) {
+                try {
+                    const abs = path.join(__dirname, '..', 'public', 'uploads', 'images', row.filename);
+                    const buf = await fs.readFile(abs);
+                    const tiles = await generateGridTiles(buf, { grid, overlap, maxTiles: grid * grid * 2 });
+                    for (const t of tiles) {
+                        try {
+                            const v = await embedImageFromImageData(t);
+                            const rect = t.rect || { x: 0, y: 0, w: t.width, h: t.height };
+                            await upsertRegionEmbedding(row.image_id, modelId, rect, v);
+                        } catch (_) {}
+                    }
+                    processed++;
+                } catch (e) {
+                    errors++;
+                }
+            }
+        }
+
+        // Refresh region cache
+        const { warmRegionCache } = require("../services/cache.service");
+        await warmRegionCache(modelId);
+
+        const totalTime = (Date.now() - startTime) / 1000;
+        return res.json({ status: 'success', processed, errors, total_time: totalTime });
+    } catch (err) {
+        console.error("❌ rebuildRegionEmbeddings failed:", err);
+        return res.status(500).json({ error: "Rebuild region embeddings failed", detail: String(err.message || err) });
+    }
+}
+
 async function stats(req, res) {
     try {
         const modelId = getModelId();
         const entry = await ensureModelCache(modelId);
+        const regionEntry = await (async () => { try { return await ensureRegionCache(modelId); } catch { return { items: [], dim: 0 }; }})();
         const modelInfo = getModelInfo();
 
         // Calculate cache efficiency
@@ -318,6 +419,9 @@ async function stats(req, res) {
                 embedding_models_cached: cacheStats.embedding_models_cached,
                 embedding_cache_size: entry.items.length,
                 embedding_dimension: entry.dim || 0,
+                region_models_cached: cacheStats.region_models_cached,
+                region_embeddings_cached: regionEntry.items.length,
+                region_embedding_dimension: regionEntry.dim || 0,
             },
             system_info: {
                 node_version: process.version,
@@ -433,6 +537,7 @@ module.exports = {
     uploadSearch,
     searchByImage,
     rebuildEmbeddings,
+    rebuildRegionEmbeddings,
     stats,
     toggleAugmentation,
     toggleRobust,

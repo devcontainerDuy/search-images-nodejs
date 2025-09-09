@@ -81,6 +81,18 @@ a {
   box-shadow: 0 2px 10px rgba(0,0,0,0.2);
 }
 
+.img-wrap {
+  position: relative;
+}
+
+.region-box {
+  position: absolute;
+  border: 2px solid #ff4757;
+  box-shadow: 0 0 0 2px rgba(255, 71, 87, 0.2);
+  border-radius: 4px;
+  pointer-events: none;
+}
+
 /* Form styling */
 .form-range {
   accent-color: #0d6efd;

@@ -7,8 +7,6 @@ const { upsertEmbedding } = require("../models/embeddings");
 // Import from the working CLIP service
 const { getModelId, embedImageFromBufferWithAugment } = require("../services/clip.service");
 const { getAugmentationEnabled } = require("../services/settings.service");
-// Fallback to simple service if main service fails
-const clipSimple = require("../services/clip.service");
 
 // List images with pagination
 async function index(req, res) {
@@ -85,19 +83,9 @@ async function create(req, res) {
                 try {
                     console.log(`🤖 Generating embedding for ${meta.filename}...`);
 
-                    // Try main CLIP service first
-                    let embedding;
-                    let modelId;
-
-                    try {
-                        modelId = getModelId();
-                        embedding = await embedImageFromBufferWithAugment(buffer, getAugmentationEnabled(), true); // respect global augment
-                    } catch (clipError) {
-                        console.warn(`⚠️  Main CLIP service failed for ${meta.filename}, trying fallback:`, clipError.message);
-                        // Fallback to simple service
-                        modelId = clipSimple.getModelId();
-                        embedding = await clipSimple.embedImageFromBufferWithAugment(buffer, getAugmentationEnabled());
-                    }
+                    // Generate embedding (respect global augment)
+                    const modelId = getModelId();
+                    const embedding = await embedImageFromBufferWithAugment(buffer, getAugmentationEnabled(), true);
 
                     // Ensure embedding is in correct format
                     const embeddingArray = embedding instanceof Float32Array ? Array.from(embedding) : Array.isArray(embedding) ? embedding : Array.from(embedding);

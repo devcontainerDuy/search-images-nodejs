@@ -8,8 +8,4 @@ async function index(req, res, next) {
     });
 }
 
-async function searchImages(req, res, next) {
-    //
-}
-
-module.exports = { index, searchImages };
+module.exports = { index };

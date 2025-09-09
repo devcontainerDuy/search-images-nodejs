@@ -36,6 +36,7 @@ const ele = {
     // Settings elements
     statsBtn: document.getElementById("statsBtn"),
     rebuildBtn: document.getElementById("rebuildBtn"),
+    rebuildRegionsBtn: document.getElementById("rebuildRegionsBtn"),
     clearCacheBtn: document.getElementById("clearCacheBtn"),
     globalAugmentation: document.getElementById("globalAugmentation"),
     robustRecovery: document.getElementById("robustRecovery"),
@@ -129,18 +130,32 @@ function displayResults(items, mode = "gallery") {
         col.className = viewMode === "list" ? "mb-3" : "col";
 
         const label = item.title && item.title.trim() ? item.title : item.filename;
-        const score = item.score !== undefined ? `<div class="search-score">${(item.score * 100).toFixed(1)}%</div>` : "";
+        const score = item.score !== undefined ? `<div class="search-score" style="z-index: 1">${(item.score * 100).toFixed(1)}%</div>` : "";
+        const region = item.region_match;
+        const regionBox =
+            region && region.w_img && region.h_img && region.w && region.h
+                ? (() => {
+                      const left = (region.x / region.w_img) * 100;
+                      const top = (region.y / region.h_img) * 100;
+                      const width = (region.w / region.w_img) * 100;
+                      const height = (region.h / region.h_img) * 100;
+                      return `<div class="region-box" style="left:${left}%;top:${top}%;width:${width}%;height:${height}%;"></div>`;
+                  })()
+                : "";
         const description = item.metadata?.description ? `<small class="text-muted d-block">${item.metadata.description}</small>` : "";
         const tags = item.metadata?.tags ? `<div class="mt-1"><small class="badge bg-secondary me-1">${item.metadata.tags.split(",").join('</small><small class="badge bg-secondary me-1">')}</small></div>` : "";
 
         col.innerHTML = `
             <div class="card gallery-item ${mode === "search" ? "search-result" : ""}" style="animation-delay: ${index * 0.1}s">
                 ${score}
-                <img src="${item.url || item.image_url}" class="card-img-top" alt="${item.filename || item.image}" loading="lazy" />
+                <div class="img-wrap">
+                    <img src="${item.url || item.image_url}" class="card-img-top" alt="${item.filename || item.image}" loading="lazy" />
+                    ${regionBox}
+                </div>
                 <div class="card-body p-2">
                     <div class="d-flex justify-content-between align-items-start">
                         <div class="flex-grow-1">
-                            <small class="fw-bold" title="${item.filename || item.image}">${label}</small>
+                            <small class="fw-bold" title="${item.filename || item.image}">${label || item.metadata?.title}</small>
                             ${description}
                             ${tags}
                         </div>
@@ -208,11 +223,11 @@ function updateSearchStats(data) {
     // Detailed timing
     if (data.timing) {
         const t = data.timing;
-        const safe = (v) => (typeof v === 'number' ? v.toFixed(3) : '-');
-        const ft = document.getElementById('featureTime');
-        const st = document.getElementById('similarityTime');
-        const so = document.getElementById('sortingTime');
-        const rr = document.getElementById('rerankTime');
+        const safe = (v) => (typeof v === "number" ? v.toFixed(3) : "-");
+        const ft = document.getElementById("featureTime");
+        const st = document.getElementById("similarityTime");
+        const so = document.getElementById("sortingTime");
+        const rr = document.getElementById("rerankTime");
         if (ft) ft.textContent = safe(t.feature_extraction);
         if (st) st.textContent = safe(t.similarity_calculation);
         if (so) so.textContent = safe(t.sorting);
@@ -220,22 +235,22 @@ function updateSearchStats(data) {
     }
     // Cache info
     const cacheHit = data?.cache_stats?.cache_hit;
-    const cacheEl = document.getElementById('cacheHit');
-    if (cacheEl) cacheEl.textContent = cacheHit ? 'Yes' : 'No';
+    const cacheEl = document.getElementById("cacheHit");
+    if (cacheEl) cacheEl.textContent = cacheHit ? "Yes" : "No";
     // Global augmentation info
-    const augGlobalEl = document.getElementById('augmentationGlobal');
-    if (augGlobalEl && typeof data.augmentation_global !== 'undefined') {
-        augGlobalEl.textContent = data.augmentation_global ? 'Bật' : 'Tắt';
+    const augGlobalEl = document.getElementById("augmentationGlobal");
+    if (augGlobalEl && typeof data.augmentation_global !== "undefined") {
+        augGlobalEl.textContent = data.augmentation_global ? "Bật" : "Tắt";
     }
     // Rerank info
-    const rerankEl = document.getElementById('rerankUsed');
-    if (rerankEl) rerankEl.textContent = data.reranked ? 'Yes' : 'No';
+    const rerankEl = document.getElementById("rerankUsed");
+    if (rerankEl) rerankEl.textContent = data.reranked ? "Yes" : "No";
 
     ele.searchStats.style.display = "block";
 }
 
-    // System management functions
-    async function loadSystemStats() {
+// System management functions
+async function loadSystemStats() {
     try {
         const res = await fetch("/api/stats");
         const data = await res.json();
@@ -280,6 +295,25 @@ async function rebuildEmbeddings() {
         showToast("Lỗi kết nối khi rebuild", "error");
     } finally {
         hideLoading();
+    }
+}
+
+async function rebuildRegionEmbeddings() {
+    if (!confirm("Rebuild region embeddings cho tất cả ảnh? Sẽ tạo index region để tăng recall khi ảnh bị cắt nhỏ.")) return;
+    try {
+        showLoading("Đang rebuild region embeddings...");
+        const res = await fetch("/api/rebuild-regions");
+        const data = await res.json();
+        if (res.ok) {
+            showToast(`Region rebuild: ${data.processed} ảnh, lỗi ${data.errors} trong ${data.total_time?.toFixed(2) || 0}s`);
+        } else {
+            showToast(data.error || "Lỗi khi rebuild region", "error");
+        }
+    } catch (error) {
+        showToast("Lỗi kết nối khi rebuild region", "error");
+    } finally {
+        hideLoading();
+        loadSystemStats();
     }
 }
 
@@ -357,7 +391,17 @@ document.addEventListener("DOMContentLoaded", () => {
         ele.searchForm.addEventListener("submit", async (e) => {
             e.preventDefault();
             const fd = new FormData(ele.searchForm);
+            const btn = ele.searchForm.querySelector('button[type="submit"]');
+            const oldBtnHtml = btn ? btn.innerHTML : "";
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span> Đang tìm...';
+            }
             await performSearch(fd);
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = oldBtnHtml;
+            }
         });
     }
 
@@ -390,7 +434,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const syncRerank = () => {
             ele.rerankK.disabled = !ele.enableRerank.checked;
         };
-        ele.enableRerank.addEventListener('change', syncRerank);
+        ele.enableRerank.addEventListener("change", syncRerank);
         syncRerank();
     }
 
@@ -441,6 +485,7 @@ document.addEventListener("DOMContentLoaded", () => {
     };
 
     ele.rebuildBtn.onclick = rebuildEmbeddings;
+    if (ele.rebuildRegionsBtn) ele.rebuildRegionsBtn.onclick = rebuildRegionEmbeddings;
     ele.clearCacheBtn.onclick = clearCaches;
 
     ele.globalAugmentation.onchange = (e) => {
@@ -457,7 +502,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 });
                 const data = await res.json();
                 if (res.ok) {
-                    showToast(`Chế độ phục hồi mạnh đã ${data.robust_recovery_mode ? 'bật' : 'tắt'}`);
+                    showToast(`Chế độ phục hồi mạnh đã ${data.robust_recovery_mode ? "bật" : "tắt"}`);
                 } else {
                     showToast(data.error || "Lỗi khi thay đổi cài đặt", "error");
                 }

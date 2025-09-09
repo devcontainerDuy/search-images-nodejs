@@ -10,7 +10,7 @@ async function upsertEmbedding(imageId, model, vec) {
 }
 
 async function getEmbeddingsWithImages(model) {
-    const sql = `SELECT e.image_id, e.dim, e.embedding, i.filename, i.title, i.description, i.tags
+    const sql = `SELECT e.image_id, e.dim, e.embedding, i.filename, i.title, i.description, i.tags, i.width, i.height
                 FROM image_embeddings e
                 JOIN images i ON i.id = e.image_id
                 WHERE e.model = ?`;

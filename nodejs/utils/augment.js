@@ -3,6 +3,7 @@
 // Returns ImageData-like objects for @xenova/transformers
 
 const I = require("image-js");
+const imageType = require("image-type");
 
 // minimize repeated warnings
 let WARNED = {
@@ -32,6 +33,11 @@ function getCV() {
 }
 
 async function decodeToImageData(buffer) {
+    const type = imageType(buffer);
+    if (type && type.mime === 'image/webp') {
+        // image-js may not support webp in this build; signal caller to fallback
+        throw new Error('unsupported format: image/webp');
+    }
     const img = await I.decode(buffer);
     const { width, height, data, channels } = img;
 
@@ -97,8 +103,42 @@ function imageToImageData(img) {
     return { data: out, width, height };
 }
 
+// Generate grid tiles (N x N) as ImageData-like objects
+// opts: { grid?: number (default 3), maxTiles?: number, overlap?: number (0..0.9) }
+async function generateGridTiles(buffer, opts = {}) {
+    const grid = Math.max(1, parseInt(opts.grid || 3, 10));
+    const maxTiles = parseInt(opts.maxTiles || grid * grid, 10);
+    const overlap = Math.min(0.9, Math.max(0, Number.isFinite(opts.overlap) ? opts.overlap : 0));
+    const img = await I.decode(buffer);
+    const { width, height } = img;
+
+    const tiles = [];
+    const tileW = Math.max(1, Math.floor(width / grid));
+    const tileH = Math.max(1, Math.floor(height / grid));
+    const strideW = Math.max(1, Math.floor(tileW * (1 - overlap)));
+    const strideH = Math.max(1, Math.floor(tileH * (1 - overlap)));
+
+    for (let y = 0; y < height && tiles.length < maxTiles; y += strideH) {
+        for (let x = 0; x < width && tiles.length < maxTiles; x += strideW) {
+            const w = x + tileW >= width ? width - x : tileW;
+            const h = y + tileH >= height ? height - y : tileH;
+            if (w <= 0 || h <= 0) continue;
+            try {
+                const tile = img.crop({ x, y, width: w, height: h });
+                const idata = imageToImageData(tile);
+                // attach rect for downstream usage (e.g., region embeddings)
+                idata.rect = { x, y, w, h };
+                tiles.push(idata);
+            } catch (_) {}
+        }
+    }
+    return tiles;
+}
+
 async function generateGeometricVariants(buffer, opts = {}) {
     const robust = !!opts.robust;
+    const type = imageType(buffer);
+    if (type && type.mime === 'image/webp') return [];
     const img = await I.decode(buffer);
     const variants = [];
     try {
@@ -464,7 +504,13 @@ async function generateAugmentedImageData(buffer, opts = {}) {
     const maxVariants = Math.max(1, Math.min(24, parseInt(opts.maxVariants || 18, 10)));
     const robust = !!opts.robust;
     const cv = await getCV();
-    const imageData = await decodeToImageData(buffer);
+    // If format unsupported (e.g., webp), skip augmentation gracefully
+    try {
+        var imageData = await decodeToImageData(buffer);
+    } catch (e) {
+        alog('augment: decode skipped ->', e.message);
+        return [];
+    }
 
     // Prepare list with original and geometric variants first (handle crops/rotations)
     const variants = [imageData];
@@ -636,4 +682,5 @@ module.exports = {
     // For tests
     generateGeometricVariants,
     imageToImageData,
+    generateGridTiles,
 };
