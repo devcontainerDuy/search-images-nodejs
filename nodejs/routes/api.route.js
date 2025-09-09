@@ -38,13 +38,14 @@ const upload = multer({
     },
 });
 
-// List images
+/**
+ * CRD endpoints
+ * GET /images - list all images
+ * POST /images - upload images (field name: image)
+ * DELETE /images/:id - delete image by id
+ */
 router.get("/images", index);
-
-// Upload multiple images (field name: image)
 router.post("/images", upload.array("image", 50), create);
-
-// Delete image by id
 router.delete("/images/:id", deleted);
 
 // Search by uploaded image (CLIP)

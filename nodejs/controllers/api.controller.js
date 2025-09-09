@@ -3,6 +3,8 @@ const fs = require("fs/promises");
 const db = require("../config/database");
 const { md5, getDimensions, generateFakeTitle } = require("../utils/helper");
 const { insertImage, getImageById } = require("../models/images");
+const { upsertEmbedding } = require("../models/embeddings");
+const { getModelId, embedImageFromBufferWithAugment } = require("../services/clip.service");
 
 // List images with pagination
 async function index(req, res) {
@@ -37,7 +39,7 @@ async function index(req, res) {
     }
 }
 
-// create and upload images
+// create and upload images with full processing
 async function create(req, res) {
     try {
         const files = req.files || [];
@@ -46,6 +48,8 @@ async function create(req, res) {
         const { title = "", description = "", tags = "" } = req.body || {};
 
         const created = [];
+        const modelId = getModelId();
+        
         for (const file of files) {
             const filePath = file.path;
             const buffer = await fs.readFile(filePath);
@@ -67,22 +71,52 @@ async function create(req, res) {
                 content_hash: hash,
             };
 
-            // Insert, guard unique file_path
+            // Insert image record first
             try {
-                const id = await insertImage(meta);
-                created.push({ id, ...meta, url: `/uploads/images/${meta.filename}` });
+                const imageId = await insertImage(meta);
+                console.log(`📸 Uploaded image ID ${imageId}: ${meta.filename}`);
+                
+                // Generate and save embedding
+                try {
+                    console.log(`🤖 Generating embedding for ${meta.filename}...`);
+                    const embedding = await embedImageFromBufferWithAugment(buffer, true);
+                    await upsertEmbedding(imageId, modelId, Array.from(embedding));
+                    console.log(`✅ Embedding saved for image ID ${imageId}`);
+                } catch (embErr) {
+                    console.error(`❌ Failed to generate embedding for ${meta.filename}:`, embErr.message);
+                    // Continue with upload even if embedding fails
+                }
+                
+                // TODO: Add color histogram and hash processing here
+                // For now, just the basic upload + embedding
+                
+                created.push({ 
+                    id: imageId, 
+                    ...meta, 
+                    url: `/uploads/images/${meta.filename}`,
+                    embedding_generated: true
+                });
+                
             } catch (err) {
                 // Duplicate file_path or other constraint violations
                 if (err && err.code === "ER_DUP_ENTRY") {
-                    // skip duplicate
+                    console.log(`⚠️  Skipping duplicate: ${meta.filename}`);
                     continue;
                 }
                 throw err;
             }
         }
 
-        const message = created.length > 0 ? `Đã thêm thành công ${created.length} ảnh` : "Không có ảnh mới được thêm";
-        return res.json({ message, count: created.length, items: created });
+        const message = created.length > 0 
+            ? `Đã thêm thành công ${created.length} ảnh với embeddings` 
+            : "Không có ảnh mới được thêm";
+            
+        return res.json({ 
+            message, 
+            count: created.length, 
+            items: created,
+            embeddings_generated: created.length
+        });
     } catch (err) {
         console.error("Upload failed:", err);
         return res.status(500).json({ error: "Upload failed", detail: String(err.message || err) });

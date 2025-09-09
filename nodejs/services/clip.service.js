@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const { l2 } = require("../utils/clip");
 const { generateAugmentedImageData } = require("../utils/augment");
+const { generateSmartAugmentations, analyzeImageQuality } = require("../utils/smart-augment");
 
 // Configure environment if needed (e.g., local model cache)
 env.localModelPath = path.resolve(__dirname, "./cache");
@@ -104,22 +105,26 @@ function getModelId() {
 }
 
 /**
- * Extract embedding with optional simple augmentations and average the vectors.
- * Mirrors Python's augmentation-mean strategy at a simpler level.
+ * Extract embedding with intelligent augmentation based on image analysis.
+ * Automatically selects optimal augmentations for blurry images, color variations, etc.
  * @param {Buffer} buffer
  * @param {boolean} useAugment
+ * @param {boolean} useSmartAugment - Use intelligent augmentation selection
  * @returns {Promise<Float32Array>}
  */
-async function embedImageFromBufferWithAugment(buffer, useAugment = true) {
+async function embedImageFromBufferWithAugment(buffer, useAugment = true, useSmartAugment = true) {
     if (!useAugment) return embedImageFromBuffer(buffer);
 
     try {
-        // Generate ImageData variants via OpenCV pipeline
-        const variants = await generateAugmentedImageData(buffer);
+        // Use smart augmentation if enabled
+        const variants = useSmartAugment 
+            ? await generateSmartAugmentations(buffer)
+            : await generateAugmentedImageData(buffer);
+            
         const vecs = [];
         
         if (variants.length > 0) {
-            console.log(`🔄 Processing ${variants.length} augmented variants...`);
+            console.log(`🔄 Processing ${variants.length} augmented variants (smart: ${useSmartAugment})...`);
             for (const img of variants) {
                 try {
                     const v = await embedImageFromImageData(img);
@@ -147,7 +152,7 @@ async function embedImageFromBufferWithAugment(buffer, useAugment = true) {
         for (let i = 0; i < dim; i++) mean[i] /= n;
         l2(mean); // Re-normalize after averaging
         
-        console.log(`✅ Averaged ${n} augmented embeddings`);
+        console.log(`✅ Averaged ${n} augmented embeddings with enhanced processing`);
         return mean;
     } catch (err) {
         console.warn("Augmentation failed, fallback to original:", err.message);
@@ -161,37 +166,50 @@ async function embedImageFromBufferWithAugment(buffer, useAugment = true) {
 function getModelInfo() {
     return {
         ...modelInfo,
-        total_variants: 6, // Original + 5 augmentations
+        total_variants: 11, // Original + 10 enhanced augmentations
         augmentation_types: [
             "original",
             "clahe_contrast",
-            "histogram_equalization", 
-            "gaussian_blur",
+            "unsharp_mask_deblur",
+            "bilateral_denoise", 
+            "color_temp_cool",
+            "color_temp_warm",
+            "gamma_correction",
+            "hsv_adjustment",
+            "histogram_equalization",
             "brightness_darker",
             "brightness_brighter"
+        ],
+        enhancement_features: [
+            "blur_recovery",
+            "color_temperature_invariance", 
+            "noise_reduction",
+            "contrast_enhancement",
+            "exposure_normalization"
         ]
     };
 }
 
 /**
- * Process multiple images in batch (for rebuild operations)
+ * Process multiple images in batch with enhanced augmentation
  * @param {Array<{id: number, buffer: Buffer, filename: string}>} imageBatch
  * @param {boolean} useAugment
+ * @param {boolean} useSmartAugment - Use intelligent augmentation
  * @returns {Promise<Array<{id: number, embedding: Float32Array, error?: string}>>}
  */
-async function processBatchEmbeddings(imageBatch, useAugment = true) {
+async function processBatchEmbeddings(imageBatch, useAugment = true, useSmartAugment = true) {
     const results = [];
     const startTime = Date.now();
     
-    console.log(`🔄 Processing batch of ${imageBatch.length} images...`);
+    console.log(`🔄 Processing batch of ${imageBatch.length} images (smart augment: ${useSmartAugment})...`);
     
     for (let i = 0; i < imageBatch.length; i++) {
         const { id, buffer, filename } = imageBatch[i];
         try {
-            const embedding = await embedImageFromBufferWithAugment(buffer, useAugment);
+            const embedding = await embedImageFromBufferWithAugment(buffer, useAugment, useSmartAugment);
             results.push({ id, embedding });
             
-            if ((i + 1) % 10 === 0) {
+            if ((i + 1) % 5 === 0) {
                 const elapsed = (Date.now() - startTime) / 1000;
                 const rate = (i + 1) / elapsed;
                 console.log(`Processed ${i + 1}/${imageBatch.length} images (${rate.toFixed(2)} img/sec)`);
@@ -203,7 +221,7 @@ async function processBatchEmbeddings(imageBatch, useAugment = true) {
     }
     
     const totalTime = (Date.now() - startTime) / 1000;
-    console.log(`✅ Batch completed in ${totalTime.toFixed(2)}s`);
+    console.log(`✅ Enhanced batch completed in ${totalTime.toFixed(2)}s`);
     
     return results;
 }

@@ -5,8 +5,7 @@ const multer = require("multer");
 const { getModelId, embedImageFromBufferWithAugment, getModelInfo, processBatchEmbeddings } = require("../services/clip.service");
 const { getEmbeddingsWithImages, getMissingImageIdsForModel, upsertEmbedding } = require("../models/embeddings");
 const { cosine } = require("../utils/clip");
-const { LRUCache } = require("lru-cache");
-const { sha256 } = require("../utils/helper");
+const { warmModelCache, ensureModelCache, deleteModelCache, getQueryEmbedding, clearQueryCache, clearAllCaches, getCacheStats } = require("../services/cache.service");
 
 let augmentationEnabled = true; // runtime toggle, applied in embedding
 let globalStats = {
@@ -15,54 +14,13 @@ let globalStats = {
     cacheHits: 0,
     cacheMisses: 0,
     lastRebuildTime: null,
-    avgSearchTime: 0
+    avgSearchTime: 0,
 };
 
-// In-memory cache of embeddings per model to avoid re-reading/parsing on every search
-const cache = new Map(); // key: modelId, val: { items: [{ image_id, filename, title, vec }], dim }
-
-// LRU cache for query image embeddings (mirror Python @lru_cache)
-const queryCache = new LRUCache({ max: 200, ttl: 5 * 60 * 1000 });
-
-async function getQueryEmbedding(buffer, useAug, modelId) {
-    const key = `${modelId}:${useAug ? "aug" : "raw"}:${sha256(buffer)}`;
-    const cached = queryCache.get(key);
-    if (cached) {
-        globalStats.cacheHits++;
-        console.log(`🎯 Cache hit for query embedding`);
-        return { vec: cached, cached: true };
-    }
-    
-    globalStats.cacheMisses++;
-    console.log(`🔄 Computing new embedding${useAug ? ' with augmentation' : ''}`);
-    const vec = await embedImageFromBufferWithAugment(buffer, useAug);
-    queryCache.set(key, vec);
-    return { vec, cached: false };
-}
-
-async function warmCache(modelId) {
-    const rows = await getEmbeddingsWithImages(modelId);
-    const items = [];
-    let dim = 0;
-    for (const r of rows) {
-        try {
-            const arr = JSON.parse(r.embedding);
-            const vec = Float32Array.from(arr);
-            if (!dim) dim = vec.length;
-            items.push({ image_id: r.image_id, filename: r.filename, title: r.title, description: r.description, tags: r.tags, vec });
-        } catch (_) {}
-    }
-    cache.set(modelId, { items, dim });
-}
-
-async function ensureCache(modelId) {
-    if (!cache.has(modelId)) await warmCache(modelId);
-    return cache.get(modelId);
-}
+// caching helpers are provided by services/cache.service
 
 // Memory storage for search upload (do not persist query image)
 const memoryUpload = multer({ storage: multer.memoryStorage() });
-
 const uploadSearch = memoryUpload.single("image");
 
 async function searchByImage(req, res) {
@@ -87,10 +45,12 @@ async function searchByImage(req, res) {
 
         const tFeat0 = Date.now();
         const { vec: qvec, cached } = await getQueryEmbedding(req.file.buffer, use_augmentation, modelId); // L2-normalized
+        if (cached) globalStats.cacheHits++;
+        else globalStats.cacheMisses++;
         const feature_time = (Date.now() - tFeat0) / 1000;
-        console.log(`⚡ Feature extraction time: ${feature_time.toFixed(4)}s${cached ? ' (cached)' : ''}`);
+        console.log(`⚡ Feature extraction time: ${feature_time.toFixed(4)}s${cached ? " (cached)" : ""}`);
 
-        const { items } = await ensureCache(modelId);
+        const { items } = await ensureModelCache(modelId);
 
         const tSim0 = Date.now();
         const scored = [];
@@ -110,11 +70,11 @@ async function searchByImage(req, res) {
                         image: it.filename,
                         score,
                         image_url: `/uploads/images/${it.filename}`,
-                        metadata: { 
-                            title: it.title, 
-                            description: it.description, 
+                        metadata: {
+                            title: it.title,
+                            description: it.description,
                             tags: it.tags,
-                            image_id: it.image_id
+                            image_id: it.image_id,
                         },
                     });
                 }
@@ -127,10 +87,10 @@ async function searchByImage(req, res) {
         const sorting_time = (Date.now() - tSort0) / 1000;
 
         const total_time = (Date.now() - t0) / 1000;
-        
+
         // Update global stats
         globalStats.avgSearchTime = (globalStats.avgSearchTime * (globalStats.totalSearches - 1) + total_time) / globalStats.totalSearches;
-        
+
         console.log(`✅ Search completed: ${results.length} results in ${total_time.toFixed(4)}s`);
 
         return res.json({
@@ -147,8 +107,8 @@ async function searchByImage(req, res) {
             model: modelId,
             cache_stats: {
                 cache_hit: cached,
-                total_cached_embeddings: items.length
-            }
+                total_cached_embeddings: items.length,
+            },
         });
     } catch (err) {
         console.error("❌ searchByImage failed:", err);
@@ -161,22 +121,22 @@ async function rebuildEmbeddings(req, res) {
     try {
         console.log("🔄 Starting embeddings rebuild...");
         globalStats.totalRebuildOperations++;
-        
+
         const modelId = getModelId();
         const missing = await getMissingImageIdsForModel(modelId);
-        
+
         if (missing.length === 0) {
             console.log("✅ No missing embeddings found");
-            return res.json({ 
-                status: "success", 
-                processed: 0, 
+            return res.json({
+                status: "success",
+                processed: 0,
                 message: "No missing embeddings",
-                model: modelId 
+                model: modelId,
             });
         }
 
         console.log(`🔄 Found ${missing.length} images without embeddings`);
-        
+
         // Process in batches to avoid memory issues
         const batchSize = 20;
         let totalProcessed = 0;
@@ -184,8 +144,8 @@ async function rebuildEmbeddings(req, res) {
 
         for (let i = 0; i < missing.length; i += batchSize) {
             const batch = missing.slice(i, i + batchSize);
-            console.log(`Processing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(missing.length/batchSize)}`);
-            
+            console.log(`Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(missing.length / batchSize)}`);
+
             // Prepare batch data
             const batchData = [];
             for (const row of batch) {
@@ -202,7 +162,7 @@ async function rebuildEmbeddings(req, res) {
             // Process batch embeddings
             if (batchData.length > 0) {
                 const results = await processBatchEmbeddings(batchData, augmentationEnabled);
-                
+
                 // Save to database
                 for (const result of results) {
                     if (result.embedding) {
@@ -222,21 +182,21 @@ async function rebuildEmbeddings(req, res) {
 
         // Refresh cache after rebuild
         console.log("🔄 Refreshing cache...");
-        cache.delete(modelId);
-        await ensureCache(modelId);
-        
+        deleteModelCache(modelId);
+        await ensureModelCache(modelId);
+
         const totalTime = (Date.now() - startTime) / 1000;
         globalStats.lastRebuildTime = new Date().toISOString();
-        
+
         console.log(`✅ Rebuild completed: ${totalProcessed} processed, ${totalErrors} errors in ${totalTime.toFixed(2)}s`);
-        
-        return res.json({ 
-            status: "success", 
+
+        return res.json({
+            status: "success",
             processed: totalProcessed,
             errors: totalErrors,
             total_time: totalTime,
             model: modelId,
-            message: `Processed ${totalProcessed} images in ${totalTime.toFixed(2)}s`
+            message: `Processed ${totalProcessed} images in ${totalTime.toFixed(2)}s`,
         });
     } catch (err) {
         console.error("❌ rebuildEmbeddings failed:", err);
@@ -247,13 +207,14 @@ async function rebuildEmbeddings(req, res) {
 async function stats(req, res) {
     try {
         const modelId = getModelId();
-        const entry = await ensureCache(modelId);
+        const entry = await ensureModelCache(modelId);
         const modelInfo = getModelInfo();
-        
+
         // Calculate cache efficiency
         const totalCacheOps = globalStats.cacheHits + globalStats.cacheMisses;
-        const cacheHitRate = totalCacheOps > 0 ? (globalStats.cacheHits / totalCacheOps * 100).toFixed(2) : 0;
-        
+        const cacheHitRate = totalCacheOps > 0 ? ((globalStats.cacheHits / totalCacheOps) * 100).toFixed(2) : 0;
+
+        const cacheStats = getCacheStats();
         return res.json({
             // Basic stats (matching Python format)
             total_images: entry.items.length,
@@ -261,29 +222,30 @@ async function stats(req, res) {
             model: modelId,
             image_folder: "/uploads/images",
             augmentation_enabled: augmentationEnabled,
-            
+
             // Enhanced stats (Node.js specific)
             model_info: modelInfo,
             performance_stats: {
                 total_searches: globalStats.totalSearches,
                 total_rebuild_operations: globalStats.totalRebuildOperations,
                 average_search_time: globalStats.avgSearchTime.toFixed(4),
-                last_rebuild_time: globalStats.lastRebuildTime
+                last_rebuild_time: globalStats.lastRebuildTime,
             },
             cache_stats: {
-                query_cache_size: queryCache.size,
-                query_cache_max: queryCache.max,
+                query_cache_size: cacheStats.query_cache_size,
+                query_cache_max: cacheStats.query_cache_max,
                 cache_hits: globalStats.cacheHits,
                 cache_misses: globalStats.cacheMisses,
                 cache_hit_rate: `${cacheHitRate}%`,
+                embedding_models_cached: cacheStats.embedding_models_cached,
                 embedding_cache_size: entry.items.length,
-                embedding_dimension: entry.dim || 0
+                embedding_dimension: entry.dim || 0,
             },
             system_info: {
                 node_version: process.version,
                 memory_usage: process.memoryUsage(),
-                uptime: process.uptime()
-            }
+                uptime: process.uptime(),
+            },
         });
     } catch (err) {
         console.error("❌ stats failed:", err);
@@ -296,24 +258,24 @@ async function toggleAugmentation(req, res) {
         const enabled = !!req.body?.enabled;
         const previousState = augmentationEnabled;
         augmentationEnabled = enabled;
-        
-        const statusText = enabled ? 'enabled' : 'disabled';
-        const actionText = enabled ? 'bật' : 'tắt';
-        
+
+        const statusText = enabled ? "enabled" : "disabled";
+        const actionText = enabled ? "bật" : "tắt";
+
         console.log(`🔧 Augmentation ${statusText} (changed from ${previousState} to ${enabled})`);
         console.log(`Đã ${actionText} tính năng tăng cường dữ liệu`);
-        
+
         // Clear query cache when augmentation setting changes to ensure consistency
         if (previousState !== enabled) {
-            queryCache.clear();
+            clearQueryCache();
             console.log("🗑️ Query cache cleared due to augmentation setting change");
         }
-        
-        return res.json({ 
-            status: "success", 
+
+        return res.json({
+            status: "success",
             augmentation_enabled: augmentationEnabled,
             previous_state: previousState,
-            cache_cleared: previousState !== enabled
+            cache_cleared: previousState !== enabled,
         });
     } catch (err) {
         console.error("❌ toggleAugmentation failed:", err);
@@ -328,21 +290,18 @@ async function toggleAugmentation(req, res) {
  */
 async function clearCaches(req, res) {
     try {
-        const queryCacheSize = queryCache.size;
-        const embeddingCacheSize = cache.size;
-        
-        queryCache.clear();
-        cache.clear();
-        
+        const before = getCacheStats();
+        clearAllCaches();
+
         console.log("🗑️ All caches cleared");
-        
+
         return res.json({
             status: "success",
             message: "All caches cleared",
             cleared: {
-                query_embeddings: queryCacheSize,
-                embedding_models: embeddingCacheSize
-            }
+                query_embeddings: before.query_cache_size,
+                embedding_models: before.embedding_models_cached,
+            },
         });
     } catch (err) {
         console.error("❌ clearCaches failed:", err);
@@ -357,7 +316,7 @@ async function healthCheck(req, res) {
     try {
         const modelId = getModelId();
         const modelInfo = getModelInfo();
-        
+
         return res.json({
             status: "healthy",
             timestamp: new Date().toISOString(),
@@ -365,14 +324,14 @@ async function healthCheck(req, res) {
             model_loaded: modelInfo.loaded,
             augmentation_enabled: augmentationEnabled,
             uptime: process.uptime(),
-            memory: process.memoryUsage()
+            memory: process.memoryUsage(),
         });
     } catch (err) {
         console.error("❌ healthCheck failed:", err);
-        return res.status(500).json({ 
-            status: "unhealthy", 
+        return res.status(500).json({
+            status: "unhealthy",
             error: String(err.message || err),
-            timestamp: new Date().toISOString()
+            timestamp: new Date().toISOString(),
         });
     }
 }

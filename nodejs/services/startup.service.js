@@ -4,6 +4,7 @@
  */
 
 const { getModelId, getModelInfo } = require("./clip.service");
+const { ensureModelCache } = require("./cache.service");
 const { getEmbeddingsWithImages } = require("../models/embeddings");
 
 let isInitialized = false;
@@ -44,11 +45,16 @@ async function _performInitialization() {
         const embeddings = await getEmbeddingsWithImages(modelId);
         console.log(`📊 Found ${embeddings.length} pre-computed embeddings`);
 
-        // 3. System ready
+        // 3. Warm embedding cache for current model (LRU-backed)
+        console.log("🔄 Warming embedding cache...");
+        const entry = await ensureModelCache(modelId);
+        console.log(`✅ Cache warmed: ${entry.items.length} vectors, dim=${entry.dim}`);
+
+        // 4. System ready
         const initTime = (Date.now() - startTime) / 1000;
         console.log(`✅ System initialized successfully in ${initTime.toFixed(2)}s`);
         console.log(`🎯 Ready for image search operations`);
-        
+
         isInitialized = true;
         initializationPromise = null;
 
@@ -56,9 +62,8 @@ async function _performInitialization() {
             status: "success",
             model: modelId,
             embeddings_count: embeddings.length,
-            initialization_time: initTime
+            initialization_time: initTime,
         };
-
     } catch (error) {
         console.error("❌ System initialization failed:", error);
         initializationPromise = null;
@@ -74,7 +79,7 @@ function getSystemStatus() {
         initialized: isInitialized,
         initializing: !!initializationPromise,
         model: getModelId(),
-        model_info: getModelInfo()
+        model_info: getModelInfo(),
     };
 }
 
@@ -91,5 +96,7 @@ module.exports = {
     initializeSystem,
     getSystemStatus,
     resetInitialization,
-    get isInitialized() { return isInitialized; }
+    get isInitialized() {
+        return isInitialized;
+    },
 };

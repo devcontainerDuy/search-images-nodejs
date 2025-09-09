@@ -1,6 +1,6 @@
-// OpenCV-based augmentations to mirror Python: CLAHE, histogram equalization,
-// Gaussian blur, brightness adjustments. Returns ImageData-like objects that
-// can be consumed by RawImage.fromImageData in @xenova/transformers.
+// Enhanced OpenCV-based augmentations for robust image search
+// Handles blurry images, color variations, lighting conditions
+// Returns ImageData-like objects for @xenova/transformers
 
 const { Image } = require("image-js");
 const cvModule = require("@techstark/opencv-js");
@@ -41,7 +41,8 @@ function toImageDataFromBGR(cv, bgr) {
     return { data: out, width, height };
 }
 
-function applyCLAHE(cv, bgr) {
+// Enhanced CLAHE for better contrast in dark/bright images
+function applyCLAHE(cv, bgr, clipLimit = 3.0, tileSize = 8) {
     const lab = new cv.Mat();
     cv.cvtColor(bgr, lab, cv.COLOR_BGR2Lab);
     const channels = new cv.MatVector();
@@ -95,10 +96,123 @@ function applyGlobalHistEq(cv, bgr) {
     return out;
 }
 
-function applyGaussianBlur(cv, bgr) {
+function applyGaussianBlur(cv, bgr, ksize = 5, sigma = 1.5) {
     const out = new cv.Mat();
-    const ksize = new cv.Size(3, 3);
-    cv.GaussianBlur(bgr, out, ksize, 0, 0, cv.BORDER_DEFAULT);
+    cv.GaussianBlur(bgr, out, new cv.Size(ksize, ksize), sigma, sigma, cv.BORDER_DEFAULT);
+    return out;
+}
+
+// New: Unsharp masking for deblurring effect
+function applyUnsharpMask(cv, bgr, amount = 1.5, radius = 1.0, threshold = 0) {
+    const blurred = new cv.Mat();
+    cv.GaussianBlur(bgr, blurred, new cv.Size(0, 0), radius);
+    
+    const mask = new cv.Mat();
+    cv.subtract(bgr, blurred, mask);
+    
+    const enhanced = new cv.Mat();
+    cv.addWeighted(bgr, 1 + amount, mask, -amount, threshold, enhanced);
+    
+    blurred.delete();
+    mask.delete();
+    return enhanced;
+}
+
+// New: Bilateral filter for noise reduction while preserving edges
+function applyBilateralFilter(cv, bgr, d = 9, sigmaColor = 75, sigmaSpace = 75) {
+    const out = new cv.Mat();
+    cv.bilateralFilter(bgr, out, d, sigmaColor, sigmaSpace);
+    return out;
+}
+
+// New: Color temperature adjustment for different lighting conditions
+function adjustColorTemperature(cv, bgr, temperature = 0) {
+    // temperature: -100 (cooler/blue) to +100 (warmer/red)
+    const out = bgr.clone();
+    const factor = temperature / 100.0;
+    
+    if (factor !== 0) {
+        const channels = new cv.MatVector();
+        cv.split(out, channels);
+        const b = channels.get(0);
+        const g = channels.get(1);
+        const r = channels.get(2);
+        
+        if (factor > 0) {
+            // Warmer: increase red, decrease blue
+            cv.convertScaleAbs(r, r, 1 + factor * 0.3, 0);
+            cv.convertScaleAbs(b, b, 1 - factor * 0.3, 0);
+        } else {
+            // Cooler: increase blue, decrease red
+            cv.convertScaleAbs(b, b, 1 - factor * 0.3, 0);
+            cv.convertScaleAbs(r, r, 1 + factor * 0.3, 0);
+        }
+        
+        cv.merge(channels, out);
+        channels.delete();
+        b.delete();
+        g.delete();
+        r.delete();
+    }
+    
+    return out;
+}
+
+// New: Gamma correction for exposure adjustment
+function adjustGamma(cv, bgr, gamma = 1.0) {
+    if (gamma === 1.0) return bgr.clone();
+    
+    // Create lookup table
+    const lut = new Uint8Array(256);
+    for (let i = 0; i < 256; i++) {
+        lut[i] = Math.min(255, Math.max(0, Math.round(255 * Math.pow(i / 255.0, 1.0 / gamma))));
+    }
+    
+    const out = new cv.Mat();
+    const lutMat = cv.matFromArray(256, 1, cv.CV_8UC1, lut);
+    cv.LUT(bgr, lutMat, out);
+    
+    lutMat.delete();
+    return out;
+}
+
+// New: HSV color space adjustments
+function adjustHSV(cv, bgr, hueShift = 0, satScale = 1.0, valScale = 1.0) {
+    const hsv = new cv.Mat();
+    cv.cvtColor(bgr, hsv, cv.COLOR_BGR2HSV);
+    
+    if (hueShift !== 0 || satScale !== 1.0 || valScale !== 1.0) {
+        const channels = new cv.MatVector();
+        cv.split(hsv, channels);
+        const h = channels.get(0);
+        const s = channels.get(1);
+        const v = channels.get(2);
+        
+        // Adjust hue (circular shift)
+        if (hueShift !== 0) {
+            cv.add(h, new cv.Scalar(hueShift), h);
+        }
+        
+        // Adjust saturation
+        if (satScale !== 1.0) {
+            cv.convertScaleAbs(s, s, satScale, 0);
+        }
+        
+        // Adjust value/brightness
+        if (valScale !== 1.0) {
+            cv.convertScaleAbs(v, v, valScale, 0);
+        }
+        
+        cv.merge(channels, hsv);
+        channels.delete();
+        h.delete();
+        s.delete();
+        v.delete();
+    }
+    
+    const out = new cv.Mat();
+    cv.cvtColor(hsv, out, cv.COLOR_HSV2BGR);
+    hsv.delete();
     return out;
 }
 
@@ -108,40 +222,90 @@ function applyBrightness(cv, bgr, alpha, beta) {
     return out;
 }
 
+// Enhanced augmentation pipeline for robust image search
 async function generateAugmentedImageData(buffer) {
     const cv = await getCV();
     const imageData = await decodeToImageData(buffer);
 
     // Original
     const baseBGR = toBGRMat(cv, imageData);
+    const variants = [];
 
-    // 1. CLAHE
-    const claheBGR = applyCLAHE(cv, baseBGR);
+    try {
+        // 1. Original (baseline)
+        variants.push(toImageDataFromBGR(cv, baseBGR));
 
-    // 2. Global histogram equalization (Y channel)
-    const histEqBGR = applyGlobalHistEq(cv, baseBGR);
+        // 2. CLAHE for contrast enhancement (good for dark/bright images)
+        const claheBGR = applyCLAHE(cv, baseBGR, 3.0, 8);
+        variants.push(toImageDataFromBGR(cv, claheBGR));
+        claheBGR.delete();
 
-    // 3. Gaussian blur (3x3)
-    const blurBGR = applyGaussianBlur(cv, baseBGR);
+        // 3. Unsharp masking for deblurring
+        const sharpBGR = applyUnsharpMask(cv, baseBGR, 1.5, 1.0, 0);
+        variants.push(toImageDataFromBGR(cv, sharpBGR));
+        sharpBGR.delete();
 
-    // 4. Darker (alpha 0.9)
-    const darkBGR = applyBrightness(cv, baseBGR, 0.9, 0);
+        // 4. Bilateral filter for noise reduction
+        const denoiseBGR = applyBilateralFilter(cv, baseBGR, 9, 75, 75);
+        variants.push(toImageDataFromBGR(cv, denoiseBGR));
+        denoiseBGR.delete();
 
-    // 5. Brighter (alpha 1.1, beta 10)
-    const brightBGR = applyBrightness(cv, baseBGR, 1.1, 10);
+        // 5. Color temperature adjustment (cooler)
+        const coolBGR = adjustColorTemperature(cv, baseBGR, -30);
+        variants.push(toImageDataFromBGR(cv, coolBGR));
+        coolBGR.delete();
 
-    // Convert all to RGBA ImageData-like objects
-    const variants = [toImageDataFromBGR(cv, baseBGR), toImageDataFromBGR(cv, claheBGR), toImageDataFromBGR(cv, histEqBGR), toImageDataFromBGR(cv, blurBGR), toImageDataFromBGR(cv, darkBGR), toImageDataFromBGR(cv, brightBGR)];
+        // 6. Color temperature adjustment (warmer)
+        const warmBGR = adjustColorTemperature(cv, baseBGR, 30);
+        variants.push(toImageDataFromBGR(cv, warmBGR));
+        warmBGR.delete();
 
-    // Cleanup mats
-    baseBGR.delete();
-    claheBGR.delete();
-    histEqBGR.delete();
-    blurBGR.delete();
-    darkBGR.delete();
-    brightBGR.delete();
+        // 7. Gamma correction for exposure
+        const gammaBGR = adjustGamma(cv, baseBGR, 1.2);
+        variants.push(toImageDataFromBGR(cv, gammaBGR));
+        gammaBGR.delete();
 
+        // 8. HSV adjustments for different lighting
+        const hsvBGR = adjustHSV(cv, baseBGR, 5, 1.1, 1.05);
+        variants.push(toImageDataFromBGR(cv, hsvBGR));
+        hsvBGR.delete();
+
+        // 9. Global histogram equalization (original augmentation)
+        const histEqBGR = applyGlobalHistEq(cv, baseBGR);
+        variants.push(toImageDataFromBGR(cv, histEqBGR));
+        histEqBGR.delete();
+
+        // 10. Slight brightness adjustments
+        const darkBGR = applyBrightness(cv, baseBGR, 0.85, -5);
+        variants.push(toImageDataFromBGR(cv, darkBGR));
+        darkBGR.delete();
+
+        const brightBGR = applyBrightness(cv, baseBGR, 1.15, 10);
+        variants.push(toImageDataFromBGR(cv, brightBGR));
+        brightBGR.delete();
+
+    } catch (error) {
+        console.warn("Augmentation error:", error.message);
+        // Return at least the original if augmentations fail
+        if (variants.length === 0) {
+            variants.push(toImageDataFromBGR(cv, baseBGR));
+        }
+    } finally {
+        // Cleanup base mat
+        baseBGR.delete();
+    }
+
+    console.log(`🎨 Generated ${variants.length} image variants for robust search`);
     return variants;
 }
 
-module.exports = { generateAugmentedImageData };
+module.exports = { 
+    generateAugmentedImageData,
+    // Export individual functions for testing
+    applyCLAHE,
+    applyUnsharpMask,
+    applyBilateralFilter,
+    adjustColorTemperature,
+    adjustGamma,
+    adjustHSV
+};
