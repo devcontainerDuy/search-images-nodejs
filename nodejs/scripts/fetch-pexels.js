@@ -17,7 +17,7 @@ const CONFIG = {
     MAX_RETRIES: 3,
     RETRY_DELAY: 1000,
     RATE_LIMIT_DELAY: 100,
-    MAX_PAGES_PER_QUERY: 1000,
+    MAX_PAGES_PER_QUERY: 100, // Pexels API limit is ~8000 images (100 pages * 80 results)
     CHECKPOINT_INTERVAL: 100,
 };
 
@@ -243,7 +243,7 @@ async function processBatchRobust(photos, query, tracker) {
 }
 
 async function processMultiplePages(query, perPage, startPage, maxPages, tracker) {
-    const pagePromises = [];
+    let totalProcessedInFunc = 0;
     let currentPage = startPage;
     let totalResults = 0;
     let actualMaxPages = maxPages;
@@ -252,22 +252,27 @@ async function processMultiplePages(query, perPage, startPage, maxPages, tracker
     try {
         const firstPageResult = await fetchFromPexelsWithRetry(query, perPage, currentPage);
         totalResults = firstPageResult.totalResults;
-        actualMaxPages = Math.min(maxPages, Math.ceil(totalResults / perPage));
+        const apiPageLimit = Math.ceil(totalResults / perPage);
+        actualMaxPages = Math.min(maxPages, apiPageLimit, CONFIG.MAX_PAGES_PER_QUERY);
         
-        console.log(`📋 Found ${totalResults} total results, will process ${actualMaxPages} pages`);
+        console.log(`📋 Found ${totalResults} total results for "${query}". Will process up to ${actualMaxPages} pages.`);
         tracker.totalExpected = Math.min(totalResults, actualMaxPages * perPage);
         
         if (firstPageResult.photos.length > 0) {
-            pagePromises.push(processBatchRobust(firstPageResult.photos, query, tracker));
+            totalProcessedInFunc += await processBatchRobust(firstPageResult.photos, query, tracker);
         }
         
         currentPage++;
     } catch (error) {
-        console.error(`❌ Failed to fetch first page: ${error.message}`);
+        console.error(`❌ Failed to fetch first page for "${query}": ${error.message}`);
         return 0;
     }
     
     // Process remaining pages in controlled batches
+    if (currentPage > actualMaxPages) {
+        return totalProcessedInFunc;
+    }
+
     const pageGroups = [];
     for (let i = currentPage; i <= actualMaxPages; i += CONFIG.MAX_CONCURRENT_PAGES) {
         const group = [];
@@ -294,15 +299,14 @@ async function processMultiplePages(query, perPage, startPage, maxPages, tracker
         
         const groupResults = await Promise.all(groupPromises);
         const groupTotal = groupResults.reduce((sum, count) => sum + count, 0);
+        totalProcessedInFunc += groupTotal;
         console.log(`📄 Completed page group ${group[0]}-${group[group.length-1]}: ${groupTotal} images processed`);
         
         // Small delay between page groups
         await sleep(200);
     }
     
-    // Wait for all processing to complete
-    const results = await Promise.all(pagePromises);
-    return results.reduce((total, count) => total + count, 0);
+    return totalProcessedInFunc;
 }
 
 async function main(query, perPage, startPage, maxPages) {
@@ -344,26 +348,34 @@ async function bulkProcess(queries, perPage = 80, maxPagesPerQuery = 100) {
     
     let totalProcessed = 0;
     let queryCount = 0;
-    
-    for (const query of queries) {
-        queryCount++;
-        console.log(`\n🔄 Processing query ${queryCount}/${queries.length}: "${query}"`);
-        
-        try {
-            const processed = await processMultiplePages(query, perPage, 1, maxPagesPerQuery, new ProgressTracker());
-            totalProcessed += processed;
-            console.log(`✅ Query "${query}" completed: ${processed} images processed`);
+
+    try {
+        for (const query of queries) {
+            queryCount++;
+            console.log(`\n🔄 Processing query ${queryCount}/${queries.length}: "${query}"`);
             
-            // Delay between queries to be respectful to the API
-            if (queryCount < queries.length) {
-                console.log(`⏳ Waiting before next query...`);
-                await sleep(2000);
+            try {
+                // Create a new tracker for each query to get a clean ETA
+                const tracker = new ProgressTracker();
+                const processed = await processMultiplePages(query, perPage, 1, maxPagesPerQuery, tracker);
+                totalProcessed += processed;
+                tracker.finish(); // Log final stats for the query
+                console.log(`✅ Query "${query}" completed: ${processed} images processed`);
+                
+                // Delay between queries to be respectful to the API
+                if (queryCount < queries.length) {
+                    console.log(`⏳ Waiting before next query...`);
+                    await sleep(2000);
+                }
+                
+            } catch (error) {
+                console.error(`❌ Failed to process query "${query}": ${error.message}`);
+                continue; // Continue with next query
             }
-            
-        } catch (error) {
-            console.error(`❌ Failed to process query "${query}": ${error.message}`);
-            continue; // Continue with next query
         }
+    } finally {
+        console.log("Ensuring database connection is closed.");
+        await db.end();
     }
     
     console.log(`🎉 Bulk processing complete! Total images processed: ${totalProcessed}`);
@@ -381,7 +393,7 @@ if (require.main === module) {
                 // Bulk processing mode: node scripts/fetch-pexels.js bulk <queries-file> [per_page] [max_pages_per_query]
                 const queriesFile = args[1];
                 const perPage = parseInt(args[2] || "80", 10);
-                const maxPagesPerQuery = parseInt(args[3] || "50", 10);
+                const maxPagesPerQuery = parseInt(args[3] || "100", 10);
 
                 if (!queriesFile) {
                     console.error("Usage: node scripts/fetch-pexels.js bulk <queries-file> [per_page] [max_pages_per_query]");
