@@ -28,4 +28,23 @@ async function getMissingImageIdsForModel(model) {
     return rows;
 }
 
-module.exports = { upsertEmbedding, getEmbeddingsWithImages, getMissingImageIdsForModel };
+/**
+ * Like getMissingImageIdsForModel but ordered by id and with optional limit.
+ * @param {string} model
+ * @param {{ order?: 'ASC'|'DESC', limit?: number }} opts
+ */
+async function getMissingImageIdsForModelOrdered(model, opts = {}) {
+    const order = (opts.order || 'DESC').toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+    const limit = Math.max(0, parseInt(opts.limit || '0', 10));
+    let sql = `SELECT i.id as id, i.file_path as file_path, i.filename as filename
+               FROM images i
+               WHERE NOT EXISTS (
+                 SELECT 1 FROM image_embeddings e WHERE e.image_id = i.id AND e.model = ?
+               )
+               ORDER BY i.id ${order}`;
+    if (limit > 0) sql += ` LIMIT ${limit}`;
+    const [rows] = await db.execute(sql, [model]);
+    return rows;
+}
+
+module.exports = { upsertEmbedding, getEmbeddingsWithImages, getMissingImageIdsForModel, getMissingImageIdsForModelOrdered };

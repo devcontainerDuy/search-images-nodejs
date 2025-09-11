@@ -8,6 +8,15 @@ const { generateSmartAugmentations, analyzeImageQuality } = require("../utils/sm
 // Configure environment if needed (e.g., local model cache)
 env.localModelPath = path.resolve(__dirname, "./cache");
 env.allowLocalModels = true;
+// Tune ONNX WebAssembly backend for better CPU utilization
+try {
+    const threads = parseInt(process.env.ONNX_NUM_THREADS || String(Math.max(2, Math.min(8, require('os').cpus().length))), 10);
+    env.backends = env.backends || {};
+    env.backends.onnx = env.backends.onnx || {};
+    env.backends.onnx.wasm = env.backends.onnx.wasm || {};
+    env.backends.onnx.wasm.numThreads = threads;
+    env.backends.onnx.wasm.simd = true;
+} catch (_) {}
 // Ensure the local model cache directory exists (created at runtime)
 try {
     if (!fs.existsSync(env.localModelPath)) {
@@ -126,30 +135,37 @@ function getModelId() {
  * @param {boolean} useSmartAugment - Use intelligent augmentation selection
  * @returns {Promise<Float32Array>}
  */
-async function embedImageFromBufferWithAugment(buffer, useAugment = true, useSmartAugment = true) {
+async function embedImageFromBufferWithAugment(buffer, useAugment = true, useSmartAugment = true, analysis = null) {
     if (!useAugment) return embedImageFromBuffer(buffer);
 
     try {
-        // Use smart augmentation if enabled
-        const variants = useSmartAugment ? await generateSmartAugmentations(buffer) : await generateAugmentedImageData(buffer);
-
-        const vecs = [];
-
-        if (variants.length > 0) {
-            elog(`🔄 Processing ${variants.length} augmented variants (smart: ${useSmartAugment})...`);
-            for (const img of variants) {
-                try {
-                    const v = await embedImageFromImageData(img);
-                    vecs.push(v);
-                } catch (e) {
-                    console.warn("Skip augmented variant:", e.message);
-                }
-            }
-        }
+        // Use smart augmentation if enabled; avoid re-analyzing if analysis provided
+        const variants = useSmartAugment ? await generateSmartAugmentations(buffer, analysis) : await generateAugmentedImageData(buffer);
 
         // Fallback to original buffer if augment fails
-        if (vecs.length === 0) {
+        if (variants.length === 0) {
             elog("⚠️ Augmentation failed, using original image");
+            return embedImageFromBuffer(buffer);
+        }
+
+        // Embed variants with limited concurrency to reduce WASM contention
+        elog(`🔄 Processing ${variants.length} augmented variants (smart: ${useSmartAugment})...`);
+        const limit = Math.max(1, parseInt(process.env.EMBED_CONCURRENCY || '2', 10));
+        const vecs = [];
+        let i = 0;
+        while (i < variants.length) {
+            const slice = variants.slice(i, i + limit);
+            const batch = await Promise.all(slice.map(img => embedImageFromImageData(img).catch(e => {
+                console.warn("Skip augmented variant:", e.message);
+                return null;
+            })));
+            for (const v of batch) if (v) vecs.push(v);
+            i += limit;
+        }
+
+        // If all variants failed, fallback to original
+        if (vecs.length === 0) {
+            elog("⚠️ All augmentation variants failed, using original image");
             return embedImageFromBuffer(buffer);
         }
 

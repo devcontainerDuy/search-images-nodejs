@@ -50,4 +50,15 @@ function cosine(vecA, vecB) {
     return dot / Math.sqrt(a2 * b2);
 }
 
-module.exports = { l2, cosine };
+/**
+ * Fast cosine for L2-normalized vectors: just dot product.
+ * Assumes both inputs are already L2-normalized.
+ */
+function cosineFast(a, b) {
+  const n = Math.min(a.length, b.length);
+  let dot = 0;
+  for (let i = 0; i < n; i++) dot += a[i] * b[i];
+  return dot;
+}
+
+module.exports = { l2, cosine, cosineFast };

@@ -5,6 +5,10 @@
 const I = require("image-js");
 const imageType = require("image-type");
 
+// Env-driven safety knobs
+const AUGMENT_ENABLE_CV = !["0","false","no"].includes(String(process.env.AUGMENT_ENABLE_CV || "true").toLowerCase());
+const AUGMENT_MAX_PIXELS = parseInt(process.env.AUGMENT_MAX_PIXELS || String(3_200_000), 10); // ~3.2MP
+
 // minimize repeated warnings
 let WARNED = {
     opencvNotReady: false,
@@ -12,6 +16,8 @@ let WARNED = {
     bilateralFailed: false,
     deconvolutionFailed: false,
 };
+// Runtime circuit breaker: if WASM throws OOB once, disable CV aug thereafter
+let DISABLE_CV_RUNTIME = false;
 const cvModule = require("@techstark/opencv-js");
 
 function getCV() {
@@ -522,11 +528,12 @@ async function generateAugmentedImageData(buffer, opts = {}) {
         }
     } catch (_) {}
 
-    // If OpenCV is not ready, return geometric-only variants
+    // Early exit if CV disabled by env, image too large, or OpenCV not ready
     const cvReady = cv && typeof cv.Mat === 'function' && typeof cv.cvtColor === 'function';
-    if (!cvReady) {
+    if (DISABLE_CV_RUNTIME || !AUGMENT_ENABLE_CV || !cvReady || (imageData.width * imageData.height) > AUGMENT_MAX_PIXELS) {
         if (!WARNED.opencvNotReady) {
-            console.warn("ℹ️ OpenCV.js not initialized; using geometric-only variants");
+            const reason = DISABLE_CV_RUNTIME ? 'disabled (runtime error)' : (!AUGMENT_ENABLE_CV ? 'disabled by env' : (!cvReady ? 'not initialized' : 'image too large'));
+            console.warn(`ℹ️ OpenCV.js ${reason}; using geometric-only variants`);
             WARNED.opencvNotReady = true;
         }
         return variants.slice(0, maxVariants);
@@ -541,120 +548,112 @@ async function generateAugmentedImageData(buffer, opts = {}) {
 
         // 2. Enhanced CLAHE for better contrast
         if (variants.length < maxVariants) {
-            const claheBGR = applyCLAHE(cv, baseBGR, 4.0, 6);
-            variants.push(toImageDataFromBGR(cv, claheBGR));
-            claheBGR.delete();
+            try {
+                const claheBGR = applyCLAHE(cv, baseBGR, 4.0, 6);
+                variants.push(toImageDataFromBGR(cv, claheBGR));
+                claheBGR.delete();
+            } catch (e) { alog('CLAHE failed:', e.message); }
         }
 
         // 3. Strong unsharp masking for blur recovery
         if (variants.length < maxVariants) {
-            const sharpBGR = applyUnsharpMask(cv, baseBGR, 2.2, 1.2);
-            variants.push(toImageDataFromBGR(cv, sharpBGR));
-            sharpBGR.delete();
+            try { const sharpBGR = applyUnsharpMask(cv, baseBGR, 2.2, 1.2); variants.push(toImageDataFromBGR(cv, sharpBGR)); sharpBGR.delete(); } catch(e) { alog('Unsharp strong failed:', e.message); }
         }
 
         // 4. Mild unsharp masking (alternative)
         if (variants.length < maxVariants) {
-            const mildSharpBGR = applyUnsharpMask(cv, baseBGR, 1.4, 0.8);
-            variants.push(toImageDataFromBGR(cv, mildSharpBGR));
-            mildSharpBGR.delete();
+            try { const mildSharpBGR = applyUnsharpMask(cv, baseBGR, 1.4, 0.8); variants.push(toImageDataFromBGR(cv, mildSharpBGR)); mildSharpBGR.delete(); } catch(e) { alog('Unsharp mild failed:', e.message); }
         }
 
         // 5. Advanced denoising for noise reduction
         if (variants.length < maxVariants) {
-            const denoiseBGR = applyAdvancedDenoising(cv, baseBGR, 8, 7, 21);
-            variants.push(toImageDataFromBGR(cv, denoiseBGR));
-            denoiseBGR.delete();
+            try { const denoiseBGR = applyAdvancedDenoising(cv, baseBGR, 8, 7, 21); variants.push(toImageDataFromBGR(cv, denoiseBGR)); denoiseBGR.delete(); } catch(e) { alog('Denoise failed:', e.message); }
         }
 
         // 6. Edge-preserving smoothing
         if (variants.length < maxVariants) {
-            const edgeBGR = applyEdgePreservingFilter(cv, baseBGR, 1, 40, 0.3);
-            variants.push(toImageDataFromBGR(cv, edgeBGR));
-            edgeBGR.delete();
+            try { const edgeBGR = applyEdgePreservingFilter(cv, baseBGR, 1, 40, 0.3); variants.push(toImageDataFromBGR(cv, edgeBGR)); edgeBGR.delete(); } catch(e) { alog('Edge-preserving failed:', e.message); }
         }
 
         // 7. Bilateral filter (strong)
         if (variants.length < maxVariants) {
-            const bilateralBGR = applyBilateralFilter(cv, baseBGR, 9, 80, 80);
-            variants.push(toImageDataFromBGR(cv, bilateralBGR));
-            bilateralBGR.delete();
+            try { const bilateralBGR = applyBilateralFilter(cv, baseBGR, 9, 80, 80); variants.push(toImageDataFromBGR(cv, bilateralBGR)); bilateralBGR.delete(); } catch(e) { alog('Bilateral failed:', e.message); }
         }
 
         // 8. Wiener-like deconvolution for motion blur
         if (variants.length < maxVariants) {
-            const deconvBGR = applyWienerDeconvolution(cv, baseBGR, 5, 0.01);
-            variants.push(toImageDataFromBGR(cv, deconvBGR));
-            deconvBGR.delete();
+            try { const deconvBGR = applyWienerDeconvolution(cv, baseBGR, 5, 0.01); variants.push(toImageDataFromBGR(cv, deconvBGR)); deconvBGR.delete(); } catch(e) { alog('Deconvolution failed:', e.message); }
         }
 
         // 9. Color temperature adjustment (cooler) - helps with color cast from blur
         if (variants.length < maxVariants) {
-            const coolBGR = adjustColorTemperature(cv, baseBGR, -25);
-            variants.push(toImageDataFromBGR(cv, coolBGR));
-            coolBGR.delete();
+            try { const coolBGR = adjustColorTemperature(cv, baseBGR, -25); variants.push(toImageDataFromBGR(cv, coolBGR)); coolBGR.delete(); } catch(e) { alog('Color temp cool failed:', e.message); }
         }
 
         // 10. Color temperature adjustment (warmer)
         if (variants.length < maxVariants) {
-            const warmBGR = adjustColorTemperature(cv, baseBGR, 25);
-            variants.push(toImageDataFromBGR(cv, warmBGR));
-            warmBGR.delete();
+            try { const warmBGR = adjustColorTemperature(cv, baseBGR, 25); variants.push(toImageDataFromBGR(cv, warmBGR)); warmBGR.delete(); } catch(e) { alog('Color temp warm failed:', e.message); }
         }
 
         // 11. Gamma correction for exposure (helps with blur from poor lighting)
         if (variants.length < maxVariants) {
-            const gammaBGR = adjustGamma(cv, baseBGR, 1.3);
-            variants.push(toImageDataFromBGR(cv, gammaBGR));
-            gammaBGR.delete();
+            try { const gammaBGR = adjustGamma(cv, baseBGR, 1.3); variants.push(toImageDataFromBGR(cv, gammaBGR)); gammaBGR.delete(); } catch(e) { alog('Gamma failed:', e.message); }
         }
 
         // 12. HSV adjustments for color recovery
         if (variants.length < maxVariants) {
-            const hsvBGR = adjustHSV(cv, baseBGR, 0, 1.15, 1.08);
-            variants.push(toImageDataFromBGR(cv, hsvBGR));
-            hsvBGR.delete();
+            try { const hsvBGR = adjustHSV(cv, baseBGR, 0, 1.15, 1.08); variants.push(toImageDataFromBGR(cv, hsvBGR)); hsvBGR.delete(); } catch(e) { alog('HSV failed:', e.message); }
         }
 
         // 13. Global histogram equalization
         if (variants.length < maxVariants) {
-            const histEqBGR = applyGlobalHistEq(cv, baseBGR);
-            variants.push(toImageDataFromBGR(cv, histEqBGR));
-            histEqBGR.delete();
+            try { const histEqBGR = applyGlobalHistEq(cv, baseBGR); variants.push(toImageDataFromBGR(cv, histEqBGR)); histEqBGR.delete(); } catch(e) { alog('HistEq failed:', e.message); }
         }
 
         // 14-15. Brightness adjustments (for under/over exposed blurry images)
         if (variants.length < maxVariants) {
-            const darkBGR = applyBrightness(cv, baseBGR, 0.8, -8);
-            variants.push(toImageDataFromBGR(cv, darkBGR));
-            darkBGR.delete();
+            try { const darkBGR = applyBrightness(cv, baseBGR, 0.8, -8); variants.push(toImageDataFromBGR(cv, darkBGR)); darkBGR.delete(); } catch(e) { alog('Brightness dark failed:', e.message); }
         }
 
         if (variants.length < maxVariants) {
-            const brightBGR = applyBrightness(cv, baseBGR, 1.2, 12);
-            variants.push(toImageDataFromBGR(cv, brightBGR));
-            brightBGR.delete();
+            try { const brightBGR = applyBrightness(cv, baseBGR, 1.2, 12); variants.push(toImageDataFromBGR(cv, brightBGR)); brightBGR.delete(); } catch(e) { alog('Brightness bright failed:', e.message); }
         }
 
         // 16. Optional upscale + sharpen (approximate SR) for low-res/motion blur
         if (robust && variants.length < maxVariants) {
-            const up = new cv.Mat();
-            cv.resize(baseBGR, up, new cv.Size(0, 0), 1.3, 1.3, cv.INTER_CUBIC);
-            const upSharp = applyUnsharpMask(cv, up, 1.6, 0.9);
-            variants.push(toImageDataFromBGR(cv, upSharp));
-            upSharp.delete();
-            up.delete();
+            try {
+                const up = new cv.Mat();
+                cv.resize(baseBGR, up, new cv.Size(0, 0), 1.5, 1.5, cv.INTER_LANCZOS4);
+                const upSharp = applyUnsharpMask(cv, up, 1.7, 1.0);
+                variants.push(toImageDataFromBGR(cv, upSharp));
+                upSharp.delete();
+                up.delete();
+            } catch(e) { alog('Upscale+sharp failed:', e.message); }
         }
 
         // 17. Median filter to reduce blocky artifacts
         if (robust && variants.length < maxVariants) {
-            const med = new cv.Mat();
-            cv.medianBlur(baseBGR, med, 3);
-            variants.push(toImageDataFromBGR(cv, med));
-            med.delete();
+            try { const med = new cv.Mat(); cv.medianBlur(baseBGR, med, 3); variants.push(toImageDataFromBGR(cv, med)); med.delete(); } catch(e) { alog('Median blur failed:', e.message); }
+        }
+
+        // 18. Super-sharpen for very blurry images
+        if (robust && variants.length < maxVariants) {
+            try { const superSharp = applyUnsharpMask(cv, baseBGR, 3.0, 2.0); variants.push(toImageDataFromBGR(cv, superSharp)); superSharp.delete(); } catch(e) { alog('Super-sharp failed:', e.message); }
+        }
+
+        // 19. High-contrast CLAHE for poor lighting
+        if (robust && variants.length < maxVariants) {
+            try { const highContrast = applyCLAHE(cv, baseBGR, 8.0, 8); variants.push(toImageDataFromBGR(cv, highContrast)); highContrast.delete(); } catch(e) { alog('High-contrast CLAHE failed:', e.message); }
         }
     } catch (error) {
-        console.warn("Enhanced augmentation error:", error.message);
+        const msg = String(error && error.message || error);
+        if (/memory access out of bounds|out of memory/i.test(msg)) {
+            DISABLE_CV_RUNTIME = true;
+        }
+        // Log once if not already warned; otherwise keep quiet to avoid spam
+        if (!WARNED.opencvNotReady) {
+            console.warn("Enhanced augmentation error:", msg);
+        }
         // Return at least the original if augmentations fail
         if (variants.length === 0) {
             variants.push(toImageDataFromBGR(cv, baseBGR));

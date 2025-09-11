@@ -8,7 +8,9 @@
     "dev:inspect": "nodemon --exec \"node --inspect ./bin/www\"",
     "test": "node test/system.test.js",
     "ensure-db": "node config/ensure.js",
-    "seed": "node scripts/fetch-pexels.js bulk scripts/sample-queries.txt"
+    "seed": "node scripts/fetch-pexels.js bulk scripts/sample-queries.txt",
+    "rebuild:emb": "node scripts/rebuild-embeddings.js",
+    "rebuild:regions": "node scripts/rebuild-regions.js"
   },
   "dependencies": {
     "@techstark/opencv-js": "^4.11.0-release.1",

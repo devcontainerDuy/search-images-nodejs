@@ -4,7 +4,8 @@ const multer = require("multer");
 const { getModelId, embedImageFromBufferWithAugment, getModelInfo, processBatchEmbeddings, embedImageGridTiles } = require("../services/clip.service");
 const { analyzeImageQuality } = require("../utils/smart-augment");
 const { getEmbeddingsWithImages, getMissingImageIdsForModel, upsertEmbedding } = require("../models/embeddings");
-const { cosine } = require("../utils/clip");
+const { cosine, cosineFast } = require("../utils/clip");
+const { parallelTopK } = require("../services/similarity.service");
 const { warmModelCache, ensureModelCache, deleteModelCache, getQueryEmbedding, clearQueryCache, clearAllCaches, getCacheStats, ensureRegionCache } = require("../services/cache.service");
 const { getAugmentationEnabled, setAugmentationEnabled, getRobustRecoveryMode, setRobustRecoveryMode } = require("../services/settings.service");
 
@@ -34,13 +35,18 @@ async function searchByImage(req, res) {
 
         let min_similarity = Math.max(0, Math.min(1, parseFloat(req.body.min_similarity ?? "0.65")));
         let top_k = Math.max(1, Math.min(200, parseInt(req.body.top_k ?? "50", 10)));
+        const topKProvided = typeof req.body.top_k !== 'undefined';
         const category = (req.body.category || "").toString().trim().toLowerCase();
         // Support 'auto' mode for augmentation (default: auto)
         const augParam = String(req.body.use_augmentation ?? "auto").toLowerCase();
         let augmentationMode = augParam === "true" ? true : augParam === "false" ? false : "auto";
-        const enableRerankRaw = String(req.body.enable_rerank ?? "true").toLowerCase();
+        const enableRerankRaw = String(req.body.enable_rerank ?? "false").toLowerCase();
         let enable_rerank = ["true", "1", "yes", "on"].includes(enableRerankRaw);
         let rerank_k = Math.max(1, Math.min(50, parseInt(req.body.rerank_k ?? "10", 10)));
+        // Style rerank (shape/color) lightweight
+        const styleRerankRaw = String(req.body.style_rerank ?? (process.env.STYLE_RERANK || 'true')).toLowerCase();
+        const enable_style_rerank = ["true", "1", "yes", "on"].includes(styleRerankRaw);
+        const style_k = Math.max(1, Math.min(50, parseInt(req.body.style_rerank_k ?? (process.env.STYLE_RERANK_K || '20'), 10)));
         // Decide final augmentation for this request, respecting global switch first
         const globalAug = getAugmentationEnabled();
         let useAugmentation = globalAug;
@@ -52,8 +58,9 @@ async function searchByImage(req, res) {
         const modelId = getModelId();
 
         // Analyze query image quality to adapt search tolerance and augmentation strategy
+        let analysis = null;
         try {
-            const analysis = await analyzeImageQuality(req.file.buffer);
+            analysis = await analyzeImageQuality(req.file.buffer);
             if (analysis) {
                 const adjustments = [];
                 if (analysis.isBlurry || analysis.isNoisy || analysis.isLowContrast) {
@@ -61,7 +68,7 @@ async function searchByImage(req, res) {
                     min_similarity = Math.max(0, min_similarity - 0.05);
                     adjustments.push(`min_similarity ${old.toFixed(2)}→${min_similarity.toFixed(2)}`);
                 }
-                if (analysis.isBlurry || analysis.isDark || analysis.isBright) {
+                if (!topKProvided && (analysis.isBlurry || analysis.isDark || analysis.isBright)) {
                     const oldTop = top_k;
                     top_k = Math.min(200, Math.max(top_k, 50));
                     if (oldTop !== top_k) adjustments.push(`top_k ${oldTop}→${top_k}`);
@@ -89,7 +96,7 @@ async function searchByImage(req, res) {
         } catch (_) {}
 
         const tFeat0 = Date.now();
-        const { vec: qvec, cached } = await getQueryEmbedding(req.file.buffer, useAugmentation, modelId); // L2-normalized
+        const { vec: qvec, cached } = await getQueryEmbedding(req.file.buffer, useAugmentation, modelId, analysis); // L2-normalized
         if (cached) globalStats.cacheHits++;
         else globalStats.cacheMisses++;
         const feature_time = (Date.now() - tFeat0) / 1000;
@@ -98,11 +105,11 @@ async function searchByImage(req, res) {
         const { items } = await ensureModelCache(modelId);
 
         const tSim0 = Date.now();
-        const scored = [];
+        // Filter items cheaply first (dim + category)
+        const filtered = [];
+        const vecs = [];
         for (const it of items) {
-            // Ensure same dimension
             if (!it.vec || it.vec.length !== qvec.length) continue;
-            // Early category filter to avoid unnecessary cosine
             if (category) {
                 const tags = (it.tags || "").toString().toLowerCase();
                 const title = (it.title || "").toString().toLowerCase();
@@ -110,26 +117,54 @@ async function searchByImage(req, res) {
                 const match = tags.split(/[\s,;]+/).includes(category) || title.includes(category) || desc.includes(category);
                 if (!match) continue;
             }
-            const score = cosine(qvec, it.vec);
-            if (score >= min_similarity) {
-                scored.push({
-                    image: it.filename,
-                    score,
-                    image_url: `/uploads/images/${it.filename}`,
-                    metadata: {
-                        title: it.title,
-                        description: it.description,
-                        tags: it.tags,
-                        image_id: it.image_id,
-                        width: it.width,
-                        height: it.height,
-                    },
-                });
-            }
+            filtered.push(it);
+            vecs.push(it.vec);
         }
+        const top = await parallelTopK(qvec, vecs, top_k, min_similarity);
         const tSort0 = Date.now();
-        scored.sort((a, b) => b.score - a.score);
-        let results = scored.slice(0, top_k).map((r) => ({ ...r, score: Number(r.score.toFixed(6)) }));
+        let results = top.map(({ idx, score }) => {
+            const it = filtered[idx];
+            return {
+                image: it.filename,
+                score,
+                image_url: `/uploads/images/${it.filename}`,
+                metadata: {
+                    title: it.title,
+                    description: it.description,
+                    tags: it.tags,
+                    image_id: it.image_id,
+                    width: it.width,
+                    height: it.height,
+                },
+            };
+        });
+        // Style rerank: prefer shape (e.g., circular frames) then color if CLIP is weak
+        if (enable_style_rerank && results.length > 1) {
+            const maxClip = results[0].score;
+            const wClip = Number(process.env.FEAT_W_CLIP || (maxClip < 0.6 ? 0.6 : 0.85));
+            const wShape = Number(process.env.FEAT_W_SHAPE || (maxClip < 0.6 ? 0.3 : 0.1));
+            const wColor = Number(process.env.FEAT_W_COLOR || (maxClip < 0.6 ? 0.1 : 0.05));
+            try {
+                const { getQueryFeatures, getImageFeaturesByPath, colorSimilarity, shapeSimilarity } = require('../services/feature-cache.service');
+                const qfeats = await getQueryFeatures(req.file.buffer);
+                const n = Math.min(style_k, results.length);
+                const updated = await Promise.all(results.slice(0, n).map(async (r) => {
+                    try {
+                        const abs = path.join(__dirname, '..', 'public', 'uploads', 'images', r.image);
+                        const feats = await getImageFeaturesByPath(abs);
+                        const sShape = shapeSimilarity(qfeats, feats);
+                        const sColor = colorSimilarity(qfeats, feats);
+                        const score_combined = wClip * r.score + wShape * sShape + wColor * sColor;
+                        return { ...r, score_style: Number(score_combined.toFixed(6)), s_shape: sShape, s_color: sColor };
+                    } catch(_) { return r; }
+                }));
+                const merged = [...updated, ...results.slice(n)];
+                merged.sort((a, b) => (b.score_style ?? b.score) - (a.score_style ?? a.score));
+                results = merged;
+            } catch (_) {}
+        }
+        // Format scores
+        results = results.map((r) => ({ ...r, score: Number((r.score_style ?? r.score).toFixed(6)) }));
         const similarity_time = (tSort0 - tSim0) / 1000;
         const sorting_time = (Date.now() - tSort0) / 1000;
 
@@ -146,6 +181,7 @@ async function searchByImage(req, res) {
                         const buf = await fs.readFile(abs);
                         // Robust mode: try grid tiles max similarity to handle tiny crops/occlusions
                         let best = -1;
+                        let bestRect = null;
                         if (getRobustRecoveryMode()) {
                             // Prefer precomputed region vectors if available
                             try {
@@ -153,7 +189,7 @@ async function searchByImage(req, res) {
                                 const regions = regionEntry?.items?.filter(it => it.image_id === r.metadata.image_id) || [];
                                 if (regions.length) {
                                     for (const rr of regions) {
-                                        const s = cosine(qvec, rr.vec);
+                                        const s = cosineFast(qvec, rr.vec);
                                         if (s > best) { best = s; bestRect = rr.rect; }
                                     }
                                 } else {
@@ -162,7 +198,7 @@ async function searchByImage(req, res) {
                                     const overlap = Math.max(0, Math.min(0.9, parseFloat(process.env.ROBUST_OVERLAP || '0.5')));
                                     const tiles = await embedImageGridTiles(buf, grid, overlap);
                                     for (const t of tiles) {
-                                        const s = cosine(qvec, t.vec);
+                                        const s = cosineFast(qvec, t.vec);
                                         if (s > best) { best = s; bestRect = t.rect; }
                                     }
                                 }
@@ -171,7 +207,7 @@ async function searchByImage(req, res) {
                         // Fallback or complement: full-image with (optional) augment
                         if (best < 0) {
                             const vec = await embedImageFromBufferWithAugment(buf, useAugmentation, true);
-                            best = cosine(qvec, vec);
+                            best = cosineFast(qvec, vec);
                         }
                         const out = { ...r, score_rerank: Number(best.toFixed(6)) };
                         if (bestRect && r.metadata?.width && r.metadata?.height) {

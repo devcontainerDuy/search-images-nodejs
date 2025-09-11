@@ -71,13 +71,13 @@ function getCacheStats() {
     };
 }
 
-async function getQueryEmbedding(buffer, useAug, modelId) {
+async function getQueryEmbedding(buffer, useAug, modelId, analysis = null) {
     const key = `${modelId}:${useAug ? "aug" : "raw"}:${sha256(buffer)}`;
     const cached = queryCache.get(key);
     if (cached) {
         return { vec: cached, cached: true };
     }
-    const vec = await embedImageFromBufferWithAugment(buffer, useAug);
+    const vec = await embedImageFromBufferWithAugment(buffer, useAug, true, analysis);
     queryCache.set(key, vec);
     return { vec, cached: false };
 }

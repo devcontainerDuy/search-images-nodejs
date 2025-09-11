@@ -40,3 +40,26 @@ module.exports = {
     deleteRegionsForModel,
     getRegionsByModel,
 };
+
+/**
+ * Get images (with existing base embeddings) that are missing region embeddings for a model.
+ * Ordered by image id with optional limit.
+ * @param {string} model
+ * @param {{ order?: 'ASC'|'DESC', limit?: number }} opts
+ */
+async function getImagesMissingRegions(model, opts = {}) {
+    const order = (opts.order || 'DESC').toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+    const limit = Math.max(0, parseInt(opts.limit || '0', 10));
+    let sql = `SELECT i.id AS image_id, i.filename
+               FROM images i
+               JOIN image_embeddings e ON e.image_id = i.id AND e.model = ?
+               LEFT JOIN image_region_embeddings r ON r.image_id = i.id AND r.model = ?
+               WHERE r.id IS NULL
+               ORDER BY i.id ${order}`;
+    const params = [model, model];
+    if (limit > 0) sql += ` LIMIT ${limit}`;
+    const [rows] = await db.execute(sql, params);
+    return rows;
+}
+
+module.exports.getImagesMissingRegions = getImagesMissingRegions;

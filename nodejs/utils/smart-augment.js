@@ -55,9 +55,9 @@ async function analyzeImageQuality(buffer) {
             blurType: blurInfo,
             size: { width: img.width, height: img.height },
             // Quality indicators
-            isBlurry: sharpness < 0.15,
-            isNoisy: noiseLevel > 0.12,
-            isLowContrast: contrast < 0.2,
+            isBlurry: sharpness < 0.25, // Increased sensitivity
+            isNoisy: noiseLevel > 0.10, // Increased sensitivity
+            isLowContrast: contrast < 0.25, // Increased sensitivity
             isDark: brightness < 0.3,
             isBright: brightness > 0.7,
         };
@@ -205,8 +205,8 @@ function detectBlurType(grayImage) {
 /**
  * Generate smart augmentations with enhanced blur/noise focus
  */
-async function generateSmartAugmentations(buffer) {
-    const analysis = await analyzeImageQuality(buffer);
+async function generateSmartAugmentations(buffer, analysis = null) {
+    analysis = analysis || (await analyzeImageQuality(buffer));
 
     if (!analysis) {
         dlog("🔄 Using enhanced default augmentation pipeline");
@@ -268,7 +268,7 @@ async function generateSmartAugmentations(buffer) {
     const moderate = analysis.isLowContrast || analysis.isDark || analysis.isBright;
     const robust = getRobustRecoveryMode();
     // Allocate more variants if robust mode is on
-    const maxVariants = severe ? (robust ? 14 : 10) : moderate ? (robust ? 10 : 6) : (robust ? 5 : 3);
+    const maxVariants = severe ? (robust ? 18 : 12) : moderate ? (robust ? 12 : 8) : (robust ? 6 : 4);
     dlog(`🚀 Applying augmentation with maxVariants=${maxVariants} (robust=${robust})`);
 
     return generateAugmentedImageData(buffer, { maxVariants, robust });
